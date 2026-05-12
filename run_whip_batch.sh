@@ -41,10 +41,9 @@ RESULTS_ROOT="$REPO/results"
 # Pick clicks by looking at frame 0 of each video first; the (540,150) and
 # (280,180) defaults are calibrated only for DC_whip_11609423.
 declare -a VIDEOS=(
-    "DC_whip_11609423|1:540,150 2:280,180"
-    # "DG_whip_16598313|1:600,200 2:300,250"
-    # "DP_whip_16005154|1:500,180 2:250,200"
-    # "JS_whip_12110018|1:550,170 2:270,220"
+    # "DC_whip_11609423|1:540,150 2:280,180"   # already done
+    "DG_whip_16598313|1:560,100 2:130,180"
+    "EG_whip_13471773|1:440,100 2:130,220"
 )
 
 for entry in "${VIDEOS[@]}"; do
