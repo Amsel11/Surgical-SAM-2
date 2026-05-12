@@ -201,16 +201,23 @@ def main():
                          "Prefix a point with '!' for a negative click "
                          "(e.g. '--object 2:280,180,!100,100'). "
                          "When given, --point/--neg-point/--box/--obj-id are ignored.")
-    ap.add_argument("--prompt-frame", type=int, default=0, help="Index of the frame on which clicks/box are given")
+    ap.add_argument("--prompts-json", type=str, default=None,
+                    help="Path to a prompts JSON describing prompts at multiple frames. "
+                         "Format: {prompt_frames:[...], objects_by_frame:{frame_idx:[{obj_id,positive:[[x,y]...],negative:[...]}]}}. "
+                         "When given, --object/--point/--box/--prompt-frame/--obj-id are ignored.")
+    ap.add_argument("--prompt-frame", type=int, default=0, help="Index of the frame on which clicks/box are given (single-frame mode)")
     ap.add_argument("--obj-id", type=int, default=1, help="Single-object mode: object id (any non-zero integer)")
     ap.add_argument("--device", default="cuda:0")
     ap.add_argument("--fps", type=float, default=None, help="Override fps of overlay video (defaults to source for mp4, 30 for frame dir)")
     ap.add_argument("--no-overlay-video", action="store_true", help="Skip writing the overlay mp4")
+    ap.add_argument("--no-overlay-jpgs", action="store_true",
+                    help="Skip writing per-frame overlay JPGs (still writes the overlay.mp4 unless --no-overlay-video). "
+                         "Use for mass runs to save disk: ~80%% reduction.")
     ap.add_argument("--keep-extracted-frames", action="store_true", help="When --video is an mp4, keep the extracted JPEG frames inside output dir")
     args = ap.parse_args()
 
-    if not args.objects and not args.point and not args.box:
-        ap.error("You must provide at least one --object, --point, or --box")
+    if not args.prompts_json and not args.objects and not args.point and not args.box:
+        ap.error("You must provide --prompts-json, --object, --point, or --box")
 
     if not os.path.exists(args.checkpoint):
         raise FileNotFoundError(
@@ -263,33 +270,57 @@ def main():
     predictor = build_sam2_video_predictor(args.config, args.checkpoint, device=device)
     state = predictor.init_state(video_path=loader_dir)
 
-    # --- Add prompts on the chosen frame ---
-    # Build a normalized list of (obj_id, points_or_None, labels_or_None, box_or_None) tuples.
-    object_specs = []
-    if args.objects:
+    # --- Add prompts ---
+    # Build a normalized list of (frame_idx, obj_id, points, labels, box) calls.
+    import json as _json
+    prompt_calls = []
+    if args.prompts_json:
+        with open(args.prompts_json) as fp:
+            pj = _json.load(fp)
+        for frame_str, objs in pj.get("objects_by_frame", {}).items():
+            fidx = int(frame_str)
+            for o in objs:
+                pos = o.get("positive", []) or []
+                neg = o.get("negative", []) or []
+                pts = pos + neg
+                labels = [1] * len(pos) + [0] * len(neg)
+                if not pts:
+                    continue
+                prompt_calls.append((
+                    fidx, int(o["obj_id"]),
+                    np.asarray(pts, dtype=np.float32),
+                    np.asarray(labels, dtype=np.int32),
+                    None,
+                ))
+    elif args.objects:
         for spec in args.objects:
-            object_specs.append((spec['obj_id'],
-                                 np.asarray(spec['points'], dtype=np.float32),
-                                 np.asarray(spec['labels'], dtype=np.int32),
-                                 None))
+            prompt_calls.append((
+                args.prompt_frame, spec['obj_id'],
+                np.asarray(spec['points'], dtype=np.float32),
+                np.asarray(spec['labels'], dtype=np.int32),
+                None,
+            ))
     else:
         pts = args.point + args.neg_point
         labels = [1] * len(args.point) + [0] * len(args.neg_point)
-        object_specs.append((
-            args.obj_id,
+        prompt_calls.append((
+            args.prompt_frame, args.obj_id,
             np.asarray(pts, dtype=np.float32) if pts else None,
             np.asarray(labels, dtype=np.int32) if pts else None,
             np.asarray(args.box, dtype=np.float32) if args.box else None,
         ))
 
-    print(f"Prompting {len(object_specs)} object(s) at frame {args.prompt_frame}")
-    for oid, points_np, labels_np, box_np in object_specs:
+    by_frame = {}
+    for f, *_ in prompt_calls:
+        by_frame[f] = by_frame.get(f, 0) + 1
+    print(f"Prompting {len(prompt_calls)} (frame,obj) calls across frames {sorted(by_frame.keys())}")
+    for fidx, oid, points_np, labels_np, box_np in prompt_calls:
         n_pos = int((labels_np == 1).sum()) if labels_np is not None else 0
         n_neg = int((labels_np == 0).sum()) if labels_np is not None else 0
-        print(f"  obj {oid}: {n_pos} pos, {n_neg} neg, box={box_np is not None}")
+        print(f"  frame {fidx}  obj {oid}: {n_pos} pos, {n_neg} neg, box={box_np is not None}")
         predictor.add_new_points_or_box(
             inference_state=state,
-            frame_idx=args.prompt_frame,
+            frame_idx=fidx,
             obj_id=oid,
             points=points_np,
             labels=labels_np,
@@ -318,6 +349,13 @@ def main():
             stdin=subprocess.PIPE,
         )
 
+    import time, datetime, json as _json
+    t_start = time.time()
+    # Per-object accumulators for the QA log.
+    mask_area_sum = {}
+    mask_area_count = {}
+    empty_frames = {}
+
     n_processed = 0
     for out_frame_idx, out_obj_ids, out_mask_logits in predictor.propagate_in_video(state):
         # Combine all per-object masks into one palette PNG (later object id wins on overlap).
@@ -327,20 +365,35 @@ def main():
             m = (logits > 0.0).cpu().numpy().squeeze().astype(bool)
             per_obj_masks.append((int(oid), m))
             combined[m] = int(oid)
+            area = int(m.sum())
+            mask_area_sum[int(oid)] = mask_area_sum.get(int(oid), 0) + area
+            mask_area_count[int(oid)] = mask_area_count.get(int(oid), 0) + 1
+            if area == 0:
+                empty_frames[int(oid)] = empty_frames.get(int(oid), 0) + 1
         mask_img = Image.fromarray(combined, mode="P")
         mask_img.putpalette(DAVIS_PALETTE)
         mask_img.save(masks_dir / f"{out_frame_idx:05d}.png")
 
-        # Build overlay: blend each object with its DAVIS color.
-        frame_path = os.path.join(loader_dir, frame_names[out_frame_idx])
-        img_bgr = cv2.imread(frame_path)
-        if img_bgr is None:
-            continue
-        overlay = img_bgr
-        for oid, m in per_obj_masks:
-            overlay = overlay_mask(overlay, m, davis_color_bgr(oid), alpha=0.5)
-        cv2.imwrite(str(overlay_dir / f"{out_frame_idx:05d}.jpg"), overlay)
-        if ffmpeg_proc is not None:
+        if not args.no_overlay_jpgs:
+            frame_path = os.path.join(loader_dir, frame_names[out_frame_idx])
+            img_bgr = cv2.imread(frame_path)
+            if img_bgr is None:
+                continue
+            overlay = img_bgr
+            for oid, m in per_obj_masks:
+                overlay = overlay_mask(overlay, m, davis_color_bgr(oid), alpha=0.5)
+            cv2.imwrite(str(overlay_dir / f"{out_frame_idx:05d}.jpg"), overlay)
+            if ffmpeg_proc is not None:
+                ffmpeg_proc.stdin.write(overlay.tobytes())
+        elif ffmpeg_proc is not None:
+            # Still write the mp4 even when skipping per-frame JPGs.
+            frame_path = os.path.join(loader_dir, frame_names[out_frame_idx])
+            img_bgr = cv2.imread(frame_path)
+            if img_bgr is None:
+                continue
+            overlay = img_bgr
+            for oid, m in per_obj_masks:
+                overlay = overlay_mask(overlay, m, davis_color_bgr(oid), alpha=0.5)
             ffmpeg_proc.stdin.write(overlay.tobytes())
         n_processed += 1
 
@@ -348,9 +401,33 @@ def main():
         ffmpeg_proc.stdin.close()
         ffmpeg_proc.wait()
 
-    print(f"Done: {n_processed} frames processed.")
+    wall_seconds = time.time() - t_start
+    mean_mask_area = {str(oid): mask_area_sum[oid] / max(mask_area_count[oid], 1)
+                      for oid in mask_area_sum}
+    log_obj = {
+        "video": Path(args.video).name,
+        "n_frames": n_processed,
+        "resolution": [W, H],
+        "source_offset": source_offset,
+        "checkpoint": args.checkpoint,
+        "config": args.config,
+        "prompts_json": args.prompts_json,
+        "prompts_frames": sorted(by_frame.keys()),
+        "n_prompt_calls": len(prompt_calls),
+        "wall_seconds": round(wall_seconds, 2),
+        "mean_mask_area_px": mean_mask_area,
+        "frames_with_empty_mask": {str(k): v for k, v in empty_frames.items()},
+        "finished_at": datetime.datetime.utcnow().isoformat() + "Z",
+    }
+    with open(out_dir / "log.json", "w") as fp:
+        _json.dump(log_obj, fp, indent=2)
+
+    print(f"Done: {n_processed} frames in {wall_seconds:.1f}s "
+          f"({n_processed / max(wall_seconds, 1e-6):.1f} fps)")
+    print(f"Log     -> {out_dir / 'log.json'}")
     print(f"Masks   -> {masks_dir}")
-    print(f"Overlays -> {overlay_dir}")
+    if not args.no_overlay_jpgs:
+        print(f"Overlays -> {overlay_dir}")
     if not args.no_overlay_video:
         print(f"Overlay video -> {out_dir / 'overlay.mp4'}")
 
