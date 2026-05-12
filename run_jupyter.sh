@@ -36,7 +36,7 @@ if [ ! -d .venv ]; then
     uv venv --python 3.11 .venv
     uv pip install torch==2.5.1+cu121 torchvision==0.20.1+cu121 --index-url https://download.pytorch.org/whl/cu121
     SAM2_BUILD_CUDA=0 uv pip install -e ".[notebooks]"
-    uv pip install imageio-ffmpeg pandas scikit-image
+    uv pip install imageio-ffmpeg pandas scikit-image ipympl
 fi
 source .venv/bin/activate
 
