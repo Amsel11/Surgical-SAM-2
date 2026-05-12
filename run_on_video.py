@@ -32,7 +32,12 @@ from pathlib import Path
 import cv2
 import numpy as np
 import torch
-from PIL import Image
+from PIL import Image, ImageFile
+
+# PIL's lazy-decoder hits spurious "image file is truncated" errors on GPFS
+# even when the PNG is fully written. Tell it to be tolerant globally so the
+# SAM2 async frame loader thread doesn't crash mid-propagation.
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 IMG_EXTS = {".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG"}
 FRAME_RE = re.compile(r"^frame_(\d+)$")
