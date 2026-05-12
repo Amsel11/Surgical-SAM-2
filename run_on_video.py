@@ -268,7 +268,13 @@ def main():
             torch.backends.cudnn.allow_tf32 = True
 
     predictor = build_sam2_video_predictor(args.config, args.checkpoint, device=device)
-    state = predictor.init_state(video_path=loader_dir)
+    # Offload the frame buffer to CPU on big videos so we don't OOM trying to load
+    # all frames into GPU/host RAM at once. 26k×1920×1080 RGB ~= 150 GB.
+    state = predictor.init_state(
+        video_path=loader_dir,
+        offload_video_to_cpu=True,
+        async_loading_frames=True,
+    )
 
     # --- Add prompts ---
     # Build a normalized list of (frame_idx, obj_id, points, labels, box) calls.

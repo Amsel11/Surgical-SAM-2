@@ -3,7 +3,7 @@
 #SBATCH --partition=oermannlab
 #SBATCH --gres=gpu:a100:1
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=32G
+#SBATCH --mem=64G
 #SBATCH --time=02:00:00
 #SBATCH --output=logs/array_%A_%a.out
 #SBATCH --error=logs/array_%A_%a.err
