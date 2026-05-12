@@ -9,7 +9,11 @@ build/*
 _C.*
 outputs/*
 checkpoints/*.pt
+checkpoints/*.pth
 demo/backend/checkpoints/*.pt
 datasets/*
 model_weights/*
 /sav_dataset/example/
+results/
+test_data/
+.claude/
