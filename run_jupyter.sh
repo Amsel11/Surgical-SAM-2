@@ -54,4 +54,7 @@ echo "Tunnel from laptop:"
 echo "  ssh -L 9000:localhost:9000 schula12@olab-1"
 echo
 
-jupyter lab --no-browser --ip=127.0.0.1 --port=8889 --ServerApp.open_browser=False
+# Bind to 0.0.0.0 so the bigpurple login node can forward into us through the
+# SSH tunnel. The token in the URL is still required for auth. Cluster network
+# is internal — fine, but never run without --ServerApp.token set.
+jupyter lab --no-browser --ip=0.0.0.0 --port=8889 --ServerApp.open_browser=False
