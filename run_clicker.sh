@@ -28,10 +28,15 @@ fi
 source .venv/bin/activate
 
 # Ensure gradio 5.x is installed (4.x breaks with newer huggingface_hub).
-# Cheap import probe; force-upgrade only if missing or stale.
 if ! python -c "import gradio; assert int(gradio.__version__.split('.')[0]) >= 5" 2>/dev/null; then
     echo "Installing/upgrading gradio >= 5..."
     uv pip install --upgrade --quiet "gradio>=5.0,<6.0" 2>/dev/null || pip install --upgrade --quiet "gradio>=5.0,<6.0"
+fi
+
+# Drag-to-box annotator (third-party custom Gradio component).
+if ! python -c "import gradio_image_annotation" 2>/dev/null; then
+    echo "Installing gradio_image_annotation..."
+    uv pip install --quiet gradio_image_annotation 2>/dev/null || pip install --quiet gradio_image_annotation
 fi
 
 PORT=${CLICKER_PORT:-9876}
