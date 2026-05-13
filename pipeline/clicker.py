@@ -250,12 +250,68 @@ def empty_state() -> dict:
         "source_frame_indices": [],  # frame positions in frame_paths we're labelling
         "cur_frame_pos": 0,           # 0..N_PROMPT_FRAMES-1
         "objects": {},                # obj_id -> {instrument_id, boxes_by_frame, cutout, label}
-        "current_obj_id": 1,
+        # New-object mode state:
+        "current_obj_id": 1,          # next obj_id to assign for a new instrument
         "current_instrument_id": None,
         "current_instrument_label": "",
         "pending_corner": None,       # (x, y) of first corner of an in-progress box
+        "pending_box": None,          # [x1,y1,x2,y2] drawn but waiting for instrument label
+        # Reboxing-mode state (frames 2/3):
+        "rebox_queue": [],            # remaining obj_ids to rebox on this frame
+        "rebox_current": None,        # currently reboxing this one, or None = new-object mode
+        # Undo log: list of ("rebox"|"new", obj_id, frame_pos) in commit order.
+        "commit_log": [],
         "status_msg": "",
     }
+
+
+def objs_needing_rebox(state: dict) -> list[int]:
+    """Existing obj_ids that don't yet have a box on the current frame, in order."""
+    cur = state["cur_frame_pos"]
+    return [oid for oid, obj in sorted(state["objects"].items()) if cur not in obj["boxes_by_frame"]]
+
+
+def setup_rebox_for_current_frame(state: dict) -> None:
+    """Initialise the rebox queue when moving to a new frame.
+       First existing-but-unboxed obj becomes rebox_current; rest queue up.
+    """
+    queue = objs_needing_rebox(state)
+    state["rebox_current"] = queue.pop(0) if queue else None
+    state["rebox_queue"] = queue
+    state["pending_corner"] = None
+    state["pending_box"] = None
+    state["current_instrument_id"] = None
+    state["current_instrument_label"] = ""
+
+
+def advance_rebox_or_finish(state: dict) -> None:
+    state["rebox_current"] = state["rebox_queue"].pop(0) if state["rebox_queue"] else None
+
+
+def commit_pending_new_obj(state: dict) -> None:
+    """Promote pending_box -> a new obj with current_instrument_id. Logged for undo."""
+    obj_id = state["current_obj_id"]
+    while obj_id in state["objects"]:
+        obj_id += 1
+    box = state["pending_box"]
+    frame_pos = state["cur_frame_pos"]
+    state["objects"][obj_id] = {
+        "instrument_id": state["current_instrument_id"],
+        "label": state["current_instrument_label"],
+        "boxes_by_frame": {frame_pos: box},
+        "cutout": None,
+    }
+    idx = state["source_frame_indices"][frame_pos]
+    cur_img = safe_load_image(state["frame_paths"][idx])
+    cutout = extract_box_cutout(cur_img, box)
+    if cutout is not None:
+        state["objects"][obj_id]["cutout"] = cutout
+    state["commit_log"].append(("new", obj_id, frame_pos))
+    state["current_obj_id"] = obj_id + 1
+    state["pending_box"] = None
+    state["pending_corner"] = None
+    state["current_instrument_id"] = None
+    state["current_instrument_label"] = ""
 
 
 def start_new_video(state: dict) -> dict:
@@ -303,6 +359,11 @@ def render_current_frame(state: dict) -> np.ndarray:
         tx, ty = x1 + 4, max(0, y1 - 16)
         draw.rectangle([tx - 2, ty - 2, tx + 8 * len(label), ty + 12], fill=color)
         draw.text((tx, ty), label, fill=(0, 0, 0))
+    pb = state.get("pending_box")
+    if pb is not None:
+        x1, y1, x2, y2 = pb
+        draw.rectangle([x1, y1, x2, y2], outline=CORNER_MARKER_COLOR, width=BOX_LINE_WIDTH)
+        draw.text((x1 + 4, max(0, y1 - 14)), "pick instrument ->", fill=CORNER_MARKER_COLOR)
     pc = state.get("pending_corner")
     if pc is not None:
         x, y = pc
@@ -330,16 +391,30 @@ def status_text(state: dict, remaining: int | None = None) -> str:
     total = len(state["source_frame_indices"])
     src_idx = state["source_frame_indices"][pos] if state["source_frame_indices"] else "?"
     n_frames = len(state["frame_paths"])
-    cur_obj = state["current_obj_id"]
-    cur_ins = state["current_instrument_label"] or "(pick from dropdown)"
     n_objs = len(state["objects"])
-    pending = state.get("pending_corner")
-    phase = "click 2nd corner" if pending else ("click 1st corner" if state.get("current_instrument_id") else "pick instrument")
     remaining_str = f"  |  {remaining} videos remaining" if remaining is not None else ""
-    return (
-        f"**{vid}**  |  frame {pos+1}/{total}  (source idx {src_idx} of {n_frames})  |  "
-        f"obj_id={cur_obj}, instrument={cur_ins}, phase={phase}  |  {n_objs} objects boxed total{remaining_str}"
-    )
+    head = f"**{vid}**  |  frame {pos+1}/{total}  (source idx {src_idx} of {n_frames})  |  {n_objs} objects total"
+
+    rebox = state.get("rebox_current")
+    if rebox is not None:
+        obj = state["objects"][rebox]
+        n_more = len(state["rebox_queue"])
+        instr = obj.get("label") or obj["instrument_id"]
+        if state.get("pending_corner") is not None:
+            phase = "click 2nd corner"
+        else:
+            phase = "click 1st corner"
+        return f"{head}\n**Re-box obj {rebox}: {instr}** ({n_more} more after this).  Phase: {phase}.{remaining_str}"
+
+    # New-object mode
+    if state.get("pending_box") is not None:
+        return f"{head}\n**New object**: box drawn -> pick instrument from dropdown to commit.{remaining_str}"
+    if state.get("pending_corner") is not None:
+        return f"{head}\n**New object**: click 2nd corner.{remaining_str}"
+    next_obj = state["current_obj_id"]
+    while next_obj in state["objects"]:
+        next_obj += 1
+    return f"{head}\n**New object** (will be obj {next_obj}): click 1st corner. Or 'Next frame'/'Save & next video'.{remaining_str}"
 
 
 # ---------------------------------------------------------------------------
@@ -354,158 +429,144 @@ def handler_start(state: dict):
 
 
 def handler_pick_instrument(state: dict, instrument_label_value):
-    """Dropdown returns the display label by default; map back to instrument_id."""
-    # gr.Dropdown with `choices=[(label, value), ...]` returns the value
+    """Dropdown handler. In new-object mode + pending_box set -> commits.
+       In reboxing mode -> ignored (instrument is inherited).
+    """
+    rem = count_remaining(connect())
+    if state.get("rebox_current") is not None:
+        # No-op in reboxing mode.
+        return state, status_text(state, remaining=rem), gr.update()
     if not instrument_label_value:
         state["current_instrument_id"] = None
         state["current_instrument_label"] = ""
-    else:
-        state["current_instrument_id"] = instrument_label_value
-        # Find pretty label
-        for label, value in load_instrument_choices():
-            if value == instrument_label_value:
-                state["current_instrument_label"] = label
-                break
-    rem = count_remaining(connect())
-    return state, status_text(state, remaining=rem)
+        return state, status_text(state, remaining=rem), gr.update()
+    state["current_instrument_id"] = instrument_label_value
+    for label, value in load_instrument_choices():
+        if value == instrument_label_value:
+            state["current_instrument_label"] = label
+            break
+    # Auto-commit if a box is waiting.
+    if state.get("pending_box") is not None:
+        commit_pending_new_obj(state)
+        return state, status_text(state, remaining=rem), gr.update(value=None)
+    return state, status_text(state, remaining=rem), gr.update()
 
 
 def handler_image_click(state: dict, evt: gr.SelectData):
     if not state.get("video_id"):
         return state, "Start a session first.", None, []
-    if not state.get("current_instrument_id"):
-        return state, "Pick an instrument from the dropdown before drawing a box.", render_current_frame(state), build_cutout_gallery(state)
 
     x, y = float(evt.index[0]), float(evt.index[1])
-    obj_id = state["current_obj_id"]
     frame_pos = state["cur_frame_pos"]
+    rebox = state.get("rebox_current")
+    rem_count = count_remaining(connect())
 
-    # Refuse to add another box if this obj already has one on this frame
-    existing_obj = state["objects"].get(obj_id)
-    if existing_obj and existing_obj["boxes_by_frame"].get(frame_pos):
-        rem = count_remaining(connect())
+    # --- Reboxing mode: 2 clicks -> commit to existing obj, advance queue.
+    if rebox is not None:
+        if state["pending_corner"] is None:
+            state["pending_corner"] = (x, y)
+        else:
+            x1, y1 = state["pending_corner"]
+            box = normalize_box(x1, y1, x, y)
+            state["objects"][rebox]["boxes_by_frame"][frame_pos] = box
+            state["commit_log"].append(("rebox", rebox, frame_pos))
+            state["pending_corner"] = None
+            advance_rebox_or_finish(state)
+        return state, status_text(state, remaining=rem_count), render_current_frame(state), build_cutout_gallery(state)
+
+    # --- New-object mode: refuse new clicks if a pending_box is still awaiting instrument.
+    if state.get("pending_box") is not None:
         return (
             state,
-            "This object already has a box on this frame. Press 'Next object' or 'Undo' first.\n\n" + status_text(state, remaining=rem),
+            "Pick an instrument from the dropdown for the drawn box (or Undo to redraw).\n\n"
+            + status_text(state, remaining=rem_count),
             render_current_frame(state),
             build_cutout_gallery(state),
         )
 
-    pending = state.get("pending_corner")
-    if pending is None:
-        # First corner click
+    if state["pending_corner"] is None:
         state["pending_corner"] = (x, y)
+    else:
+        x1, y1 = state["pending_corner"]
+        state["pending_box"] = normalize_box(x1, y1, x, y)
+        state["pending_corner"] = None
+        # If user pre-selected an instrument, auto-commit.
+        if state.get("current_instrument_id"):
+            commit_pending_new_obj(state)
+
+    return state, status_text(state, remaining=rem_count), render_current_frame(state), build_cutout_gallery(state)
+
+
+def handler_skip_rebox(state: dict):
+    """In reboxing mode: skip the current obj on this frame (it's not visible here)."""
+    if state.get("rebox_current") is None:
         rem = count_remaining(connect())
-        return (
-            state,
-            status_text(state, remaining=rem),
-            render_current_frame(state),
-            build_cutout_gallery(state),
-        )
-
-    # Second corner click — finalize box
-    x1, y1 = pending
-    box = normalize_box(x1, y1, x, y)
+        return state, "Not in re-boxing mode — nothing to skip.\n\n" + status_text(state, remaining=rem), render_current_frame(state), build_cutout_gallery(state)
     state["pending_corner"] = None
-
-    if obj_id not in state["objects"]:
-        state["objects"][obj_id] = {
-            "instrument_id": state["current_instrument_id"],
-            "label": state["current_instrument_label"],
-            "boxes_by_frame": {},
-            "cutout": None,
-        }
-
-    state["objects"][obj_id]["boxes_by_frame"][frame_pos] = box
-
-    # Cutout from first box for this object (best image of the instrument).
-    if state["objects"][obj_id]["cutout"] is None:
-        idx = state["source_frame_indices"][frame_pos]
-        cur_img = safe_load_image(state["frame_paths"][idx])
-        cutout = extract_box_cutout(cur_img, box)
-        if cutout is not None:
-            state["objects"][obj_id]["cutout"] = cutout
-
+    advance_rebox_or_finish(state)
     rem = count_remaining(connect())
-    return (
-        state,
-        status_text(state, remaining=rem),
-        render_current_frame(state),
-        build_cutout_gallery(state),
-    )
-
-
-def handler_next_object(state: dict):
-    """Advance to a fresh obj_id. Clears pending corner and forces re-pick of instrument."""
-    if not state.get("video_id"):
-        return state, "Start a session first."
-    existing_ids = list(state["objects"].keys())
-    state["current_obj_id"] = (max(existing_ids) + 1) if existing_ids else 1
-    state["current_instrument_id"] = None
-    state["current_instrument_label"] = ""
-    state["pending_corner"] = None
-    rem = count_remaining(connect())
-    return state, status_text(state, remaining=rem)
+    return state, status_text(state, remaining=rem), render_current_frame(state), build_cutout_gallery(state)
 
 
 def handler_undo(state: dict):
-    """Undo the most recent action:
-       1. If a corner is pending, clear it.
-       2. Else if current obj has a box on current frame, remove it (and the obj if empty).
-       3. Else: no-op.
+    """Undo priority:
+       1. pending_box  -> clear it (last box drawn but not labelled)
+       2. pending_corner -> clear it (first corner of an in-progress box)
+       3. Most recent commit ON THIS FRAME -> reverse it (rebox: put back as current; new: delete obj if empty)
     """
-    if state.get("pending_corner") is not None:
+    if state.get("pending_box") is not None:
+        state["pending_box"] = None
+    elif state.get("pending_corner") is not None:
         state["pending_corner"] = None
     else:
-        obj_id = state["current_obj_id"]
-        frame_pos = state["cur_frame_pos"]
-        obj = state["objects"].get(obj_id)
-        if obj and obj["boxes_by_frame"].pop(frame_pos, None) is not None:
-            if not obj["boxes_by_frame"]:
-                state["objects"].pop(obj_id, None)
+        cur = state["cur_frame_pos"]
+        # Scan commit_log backwards for most recent entry on this frame.
+        for i in range(len(state["commit_log"]) - 1, -1, -1):
+            action, obj_id, fp = state["commit_log"][i]
+            if fp != cur:
+                continue
+            state["commit_log"].pop(i)
+            obj = state["objects"].get(obj_id)
+            if obj is not None:
+                obj["boxes_by_frame"].pop(cur, None)
+                if action == "rebox":
+                    # Put obj_id back as current rebox target.
+                    if state["rebox_current"] is not None:
+                        state["rebox_queue"].insert(0, state["rebox_current"])
+                    state["rebox_current"] = obj_id
+                elif action == "new":
+                    if not obj["boxes_by_frame"]:
+                        del state["objects"][obj_id]
+            break
     rem = count_remaining(connect())
-    return (
-        state,
-        status_text(state, remaining=rem),
-        render_current_frame(state),
-        build_cutout_gallery(state),
-    )
+    return state, status_text(state, remaining=rem), render_current_frame(state), build_cutout_gallery(state)
 
 
 def handler_next_frame(state: dict):
     if not state.get("video_id"):
         return state, "Start a session first.", None, []
     state["cur_frame_pos"] = min(state["cur_frame_pos"] + 1, len(state["source_frame_indices"]) - 1)
-    state["current_obj_id"] = max(list(state["objects"].keys()) + [0]) + 1
-    state["current_instrument_id"] = None
-    state["current_instrument_label"] = ""
-    state["pending_corner"] = None
+    setup_rebox_for_current_frame(state)
     rem = count_remaining(connect())
-    return (
-        state,
-        status_text(state, remaining=rem),
-        render_current_frame(state),
-        build_cutout_gallery(state),
-    )
+    return state, status_text(state, remaining=rem), render_current_frame(state), build_cutout_gallery(state)
 
 
 def handler_resample_frame(state: dict):
-    """Replace the source index for the current frame slot with a new random one."""
+    """Replace the source index for the current frame slot with a new random one.
+       Drops any boxes already drawn on this slot and re-sets the rebox queue."""
     if not state.get("video_id"):
         return state, "Start a session first.", None, []
     n = len(state["frame_paths"])
     new_idx = random.randint(0, n - 1)
     state["source_frame_indices"][state["cur_frame_pos"]] = new_idx
+    cur = state["cur_frame_pos"]
     for obj in state["objects"].values():
-        obj["boxes_by_frame"].pop(state["cur_frame_pos"], None)
-    state["pending_corner"] = None
+        obj["boxes_by_frame"].pop(cur, None)
+    # Purge commit_log entries for this frame.
+    state["commit_log"] = [e for e in state["commit_log"] if e[2] != cur]
+    setup_rebox_for_current_frame(state)
     rem = count_remaining(connect())
-    return (
-        state,
-        status_text(state, remaining=rem),
-        render_current_frame(state),
-        build_cutout_gallery(state),
-    )
+    return state, status_text(state, remaining=rem), render_current_frame(state), build_cutout_gallery(state)
 
 
 def handler_save_and_next(state: dict):
@@ -546,12 +607,12 @@ def build_ui() -> gr.Blocks:
     with gr.Blocks(title="SurgSAM-2 Click Collector") as demo:
         gr.Markdown(
             "## SurgSAM-2 box collector\n"
-            "1. **Start session** -> next un-labelled video loads.  "
-            "2. Pick an instrument from the dropdown.  "
-            "3. Click **two opposite corners** on the image to draw a box around it.  "
-            "4. **Next object** before moving to a different instrument (re-pick instrument).  "
-            "5. **Next frame** after boxing everything visible on this frame.  "
-            "6. **Save & next video** after all 3 frames are done."
+            "**Frame 1** (any frame with no prior objects): draw a box around an instrument "
+            "(2 clicks, opposite corners) -> pick instrument from dropdown to commit. Repeat for each instrument.\n\n"
+            "**Frames 2 & 3**: the app walks you through re-boxing each existing object in turn "
+            "(instrument is inherited — no dropdown needed). After all existing objs are done (or skipped), "
+            "you can box new objects same as frame 1.\n\n"
+            "**Same obj_id across frames** is required for SAM2 to refresh its tracks rather than start new ones."
         )
         status_md = gr.Markdown("Click 'Start session' to begin.")
 
@@ -561,12 +622,12 @@ def build_ui() -> gr.Blocks:
                 with gr.Row():
                     instrument_dd = gr.Dropdown(
                         choices=instrument_choices,
-                        label="Current object's instrument",
+                        label="Instrument for the drawn box (new-object mode only)",
                         value=None,
                         interactive=True,
                     )
                 with gr.Row():
-                    btn_next_obj = gr.Button("Next object (different instrument)")
+                    btn_skip_rebox = gr.Button("Skip this obj on this frame (not visible)")
                     btn_undo = gr.Button("Undo")
                 with gr.Row():
                     btn_resample = gr.Button("This frame is empty -> sample a different one")
@@ -582,9 +643,9 @@ def build_ui() -> gr.Blocks:
         state = gr.State(empty_state())
 
         btn_start.click(handler_start, inputs=[state], outputs=[state, status_md, image, cutout_gallery])
-        instrument_dd.change(handler_pick_instrument, inputs=[state, instrument_dd], outputs=[state, status_md])
+        instrument_dd.change(handler_pick_instrument, inputs=[state, instrument_dd], outputs=[state, status_md, instrument_dd])
         image.select(handler_image_click, inputs=[state], outputs=[state, status_md, image, cutout_gallery])
-        btn_next_obj.click(handler_next_object, inputs=[state], outputs=[state, status_md])
+        btn_skip_rebox.click(handler_skip_rebox, inputs=[state], outputs=[state, status_md, image, cutout_gallery])
         btn_undo.click(handler_undo, inputs=[state], outputs=[state, status_md, image, cutout_gallery])
         btn_resample.click(handler_resample_frame, inputs=[state], outputs=[state, status_md, image, cutout_gallery])
         btn_next_frame.click(handler_next_frame, inputs=[state], outputs=[state, status_md, image, cutout_gallery])
