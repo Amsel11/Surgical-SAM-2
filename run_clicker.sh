@@ -3,7 +3,7 @@
 #SBATCH --partition=cpu_dev
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=16G
-#SBATCH --time=08:00:00
+#SBATCH --time=04:00:00
 #SBATCH --output=logs/clicker_%j.out
 #SBATCH --error=logs/clicker_%j.err
 #
