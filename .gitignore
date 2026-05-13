@@ -16,4 +16,11 @@ model_weights/*
 /sav_dataset/example/
 results/
 test_data/
+prompts/
+archive/
 .claude/
+
+# Manifest DB is live state on bigpurple. Snapshots (manifest_snapshot.*) ARE committed.
+manifest.db
+manifest.db-wal
+manifest.db-shm

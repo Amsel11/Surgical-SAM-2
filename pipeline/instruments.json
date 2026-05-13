@@ -1,0 +1,39 @@
+{
+  "_meta": {
+    "source": "DaVinci X/Xi Instruments & Accessories Catalog",
+    "url": "https://www.intuitive.com/en-us/-/media/ISI/Intuitive/Pdf/da-vinci-x-xi-instruments-accessories-catalog.pdf",
+    "notes": "Starter vocabulary. Snake_case slugs are stable IDs. display_name is for UI. Add aliases as you encounter naming inconsistencies in clinical notes."
+  },
+  "instruments": [
+    {"instrument_id": "monopolar_curved_scissors", "display_name": "Monopolar Curved Scissors",  "category": "energy"},
+    {"instrument_id": "permanent_cautery_hook",    "display_name": "Permanent Cautery Hook",      "category": "energy"},
+    {"instrument_id": "permanent_cautery_spatula", "display_name": "Permanent Cautery Spatula",   "category": "energy"},
+    {"instrument_id": "vessel_sealer_extend",      "display_name": "Vessel Sealer Extend",        "category": "energy"},
+    {"instrument_id": "fenestrated_bipolar",       "display_name": "Fenestrated Bipolar Forceps", "category": "energy"},
+    {"instrument_id": "maryland_bipolar",          "display_name": "Maryland Bipolar Forceps",    "category": "energy"},
+
+    {"instrument_id": "prograsp_forceps",          "display_name": "ProGrasp Forceps",            "category": "grasper"},
+    {"instrument_id": "cadiere_forceps",           "display_name": "Cadiere Forceps",             "category": "grasper"},
+    {"instrument_id": "tip_up_fenestrated_grasper","display_name": "Tip-Up Fenestrated Grasper",  "category": "grasper"},
+    {"instrument_id": "double_fenestrated_grasper","display_name": "Double Fenestrated Grasper",  "category": "grasper"},
+
+    {"instrument_id": "large_needle_driver",       "display_name": "Large Needle Driver",         "category": "needle_driver"},
+    {"instrument_id": "mega_needle_driver",        "display_name": "Mega Needle Driver",          "category": "needle_driver"},
+    {"instrument_id": "suture_cut_needle_driver",  "display_name": "Suture Cut Needle Driver",    "category": "needle_driver"},
+
+    {"instrument_id": "endowrist_stapler",         "display_name": "EndoWrist Stapler",           "category": "stapler"},
+    {"instrument_id": "endowrist_clip_applier",    "display_name": "EndoWrist Clip Applier",      "category": "stapler"},
+    {"instrument_id": "small_clip_applier",        "display_name": "Small Clip Applier",          "category": "stapler"},
+
+    {"instrument_id": "suction_irrigator",         "display_name": "Suction/Irrigator",           "category": "other"},
+    {"instrument_id": "laparoscopic_suction",      "display_name": "Laparoscopic Suction",        "category": "other"},
+    {"instrument_id": "laparoscopic_grasper",      "display_name": "Laparoscopic Grasper",        "category": "other"},
+    {"instrument_id": "laparoscopic_scissors",     "display_name": "Laparoscopic Scissors",       "category": "other"},
+
+    {"instrument_id": "gauze",                     "display_name": "Gauze",                       "category": "consumable"},
+    {"instrument_id": "suture_material",           "display_name": "Suture Material",             "category": "consumable"},
+    {"instrument_id": "clip",                      "display_name": "Surgical Clip (deployed)",    "category": "consumable"},
+
+    {"instrument_id": "unknown_instrument",        "display_name": "Unknown / Unidentified",      "category": "other", "notes": "Use when an instrument is clearly visible but you can't identify it. Don't leave blank — keeps DICE per-class honest about uncertainty."}
+  ]
+}
