@@ -87,4 +87,14 @@ python run_on_video.py \
     --fps 1.0 \
     --no-overlay-jpgs
 
+echo "[$VIDEO_ID] inference done at $(date -Iseconds)"
+
+# --- Auto-generate small preview for rsync back to olab-1 ---
+FFMPEG="$REPO/.venv/lib/python3.11/site-packages/imageio_ffmpeg/binaries/ffmpeg-linux-x86_64-v7.0.2"
+if [ -x "$FFMPEG" ] && [ -f "$OUT_DIR/overlay.mp4" ] && [ ! -f "$OUT_DIR/preview_small.mp4" ]; then
+    echo "[$VIDEO_ID] encoding small preview..."
+    "$FFMPEG" -y -i "$OUT_DIR/overlay.mp4" -vf "scale=320:-2" -c:v libx264 -crf 32 -preset veryfast -an "$OUT_DIR/preview_small.mp4" >/dev/null 2>&1 && \
+        echo "[$VIDEO_ID] preview ready: $(du -h "$OUT_DIR/preview_small.mp4" | cut -f1)"
+fi
+
 echo "[$VIDEO_ID] done at $(date -Iseconds)"
