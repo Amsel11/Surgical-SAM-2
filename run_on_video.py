@@ -293,15 +293,16 @@ def main():
             for o in objs:
                 pos = o.get("positive", []) or []
                 neg = o.get("negative", []) or []
+                box = o.get("box")  # [x1, y1, x2, y2] or None
                 pts = pos + neg
                 labels = [1] * len(pos) + [0] * len(neg)
-                if not pts:
+                if not pts and not box:
                     continue
                 prompt_calls.append((
                     fidx, int(o["obj_id"]),
-                    np.asarray(pts, dtype=np.float32),
-                    np.asarray(labels, dtype=np.int32),
-                    None,
+                    np.asarray(pts, dtype=np.float32) if pts else None,
+                    np.asarray(labels, dtype=np.int32) if pts else None,
+                    np.asarray(box, dtype=np.float32) if box else None,
                 ))
     elif args.objects:
         for spec in args.objects:

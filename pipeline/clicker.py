@@ -1,21 +1,25 @@
-"""Gradio click collector for SurgSAM-2 prompts.
+"""Gradio click collector for SurgSAM-2 prompts (box mode).
 
-Replaces collect_prompts.ipynb. Pulls (video, seed) pairs from the manifest where
-no prompt_set exists yet, walks 3 sampled prompt frames per video, lets the
-user click positive points and label each object with an instrument from the
-controlled vocabulary, then writes a prompts JSON + manifest rows on save.
+Replaces collect_prompts.ipynb. For each pending (video, seed=1) pair in the
+manifest, samples 3 prompt frames at 25/50/75% and lets the user draw a
+bounding box around each instrument (2 clicks: opposite corners). Each box is
+labelled with an instrument from the controlled vocabulary. Saves prompts JSON
++ manifest rows atomically on "Save & next video".
+
+Why boxes, not single points: SAM/SAM2 reports box-prompt IoU ~75-85% vs
+single-point ~50-65%, and the gap widens for elongated objects (surgical
+instruments). Boxes also match what YOLO/DINO auto-prompting will produce
+later, so manual vs auto prompt_method comparisons stay apples-to-apples.
 
 Design choices:
-- Reference cutouts are simple bounding-box crops (120x120 px) around the first
-  click for each object. Not real SAM2 masks. Cheap, GPU-free, fast — purpose
-  is human consistency ("yes that's the same object I clicked on frame 1"), not
-  perfect masks.
-- One commit point per video: prompt_set + prompt_objects + JSON written
-  atomically on "Save & next video". Partial work is in-memory only.
-- Empty-frame handling: if a sampled frame has nothing relevant, click "Skip
-  this frame -> next sample" to re-roll a different frame in the same slot.
-- Skip video: marks the (video, seed) as failed in the manifest so it gets
-  skipped on next session.
+- Box per object per frame (not multiple boxes / object / frame).
+- Reference cutouts = the box content cropped from the source frame, resized to
+  200 px on long side. Cheap, GPU-free, gives the user a real picture of
+  "what was Obj 1" when labelling frame 2/3.
+- One commit point per video: writes prompt_set + prompt_objects + JSON in
+  one transaction on Save. Partial work is in-memory only.
+- Empty-frame fallback: re-roll a random index for the current slot.
+- Skip video: marks (video, seed=1, manual_box) as failed; won't reappear.
 """
 
 from __future__ import annotations
@@ -24,9 +28,7 @@ import io
 import json
 import random
 import sys
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 import gradio as gr
 import numpy as np
@@ -38,12 +40,33 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 PROMPTS_DIR = REPO_ROOT / "prompts"
 N_PROMPT_FRAMES = 3
-CUTOUT_SIZE = 120
-POINT_RADIUS = 6
-POINT_COLOR_POS = (50, 255, 50)
-POINT_COLOR_OBJ_BORDER = (255, 255, 255)
+CUTOUT_LONG_SIDE = 200
+BOX_LINE_WIDTH = 3
+CORNER_MARKER_RADIUS = 8
+CORNER_MARKER_COLOR = (255, 255, 50)
 SEED = 1  # MVP: single seed. Multi-seed flow in a later iteration.
-PROMPT_METHOD = "manual_click"
+PROMPT_METHOD = "manual_box"
+
+# Per-object box colors; cycled by obj_id.
+OBJ_COLORS = [
+    (60, 200, 255),   # cyan
+    (255, 150, 60),   # orange
+    (180, 255, 60),   # lime
+    (255, 100, 200),  # pink
+    (150, 120, 255),  # purple
+    (255, 230, 60),   # yellow
+    (60, 255, 180),   # teal
+    (255, 80, 100),   # red
+]
+
+
+def obj_color(obj_id: int) -> tuple[int, int, int]:
+    return OBJ_COLORS[(int(obj_id) - 1) % len(OBJ_COLORS)]
+
+
+def normalize_box(x1: float, y1: float, x2: float, y2: float) -> list[float]:
+    """Return xyxy with x1<x2, y1<y2 regardless of click order."""
+    return [min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2)]
 
 
 # ---------------------------------------------------------------------------
@@ -72,13 +95,21 @@ def sample_frame_positions(n_total: int, n_samples: int = N_PROMPT_FRAMES) -> li
     return [int(round((i + 1) * n_total / (n_samples + 1))) for i in range(n_samples)]
 
 
-def extract_cutout(image: np.ndarray, x: float, y: float, size: int = CUTOUT_SIZE) -> np.ndarray:
+def extract_box_cutout(image: np.ndarray, box: list[float], long_side: int = CUTOUT_LONG_SIDE) -> np.ndarray | None:
+    """Crop the box region from `image` and resize so the long side = long_side px."""
     h, w = image.shape[:2]
-    cx, cy = int(round(x)), int(round(y))
-    half = size // 2
-    x1, x2 = max(0, cx - half), min(w, cx + half)
-    y1, y2 = max(0, cy - half), min(h, cy + half)
-    return image[y1:y2, x1:x2].copy()
+    x1, y1, x2, y2 = box
+    xi1, yi1 = max(0, int(round(x1))), max(0, int(round(y1)))
+    xi2, yi2 = min(w, int(round(x2))), min(h, int(round(y2)))
+    if xi2 <= xi1 or yi2 <= yi1:
+        return None
+    crop = image[yi1:yi2, xi1:xi2]
+    ch, cw = crop.shape[:2]
+    scale = long_side / max(ch, cw)
+    new_w = max(1, int(round(cw * scale)))
+    new_h = max(1, int(round(ch * scale)))
+    pil = Image.fromarray(crop).resize((new_w, new_h), Image.BILINEAR)
+    return np.array(pil)
 
 
 # ---------------------------------------------------------------------------
@@ -95,7 +126,7 @@ def load_instrument_choices() -> list[tuple[str, str]]:
 
 
 def fetch_next_pending_video(conn) -> dict | None:
-    """Next video without a (seed=SEED, prompt_method=manual_click) prompt_set."""
+    """Next video without a (seed=SEED, prompt_method=PROMPT_METHOD) prompt_set."""
     row = conn.execute(
         """
         SELECT v.video_id, v.frames_dir, v.n_frames
@@ -140,13 +171,14 @@ def save_prompt_set_to_manifest(state: dict) -> str:
     for frame_pos, source_idx in enumerate(state["source_frame_indices"]):
         per_frame: list[dict] = []
         for obj_id, obj in objects.items():
-            pts = obj["points_by_frame"].get(frame_pos)
-            if not pts or not pts["positive"]:
+            box = obj["boxes_by_frame"].get(frame_pos)
+            if not box:
                 continue
             per_frame.append({
                 "obj_id": int(obj_id),
-                "positive": [[float(x), float(y)] for x, y in pts["positive"]],
-                "negative": [[float(x), float(y)] for x, y in pts.get("negative", [])],
+                "box": [float(v) for v in box],
+                "positive": [],
+                "negative": [],
             })
         if per_frame:
             objects_by_frame[str(source_idx)] = per_frame
@@ -215,12 +247,14 @@ def empty_state() -> dict:
         "video_id": None,
         "frames_dir": None,
         "frame_paths": [],
-        "source_frame_indices": [],  # actual frame numbers in `frame_paths` we're clicking
+        "source_frame_indices": [],  # frame positions in frame_paths we're labelling
         "cur_frame_pos": 0,           # 0..N_PROMPT_FRAMES-1
-        "objects": {},                # obj_id -> {instrument_id, points_by_frame, cutout, label}
+        "objects": {},                # obj_id -> {instrument_id, boxes_by_frame, cutout, label}
         "current_obj_id": 1,
         "current_instrument_id": None,
         "current_instrument_label": "",
+        "pending_corner": None,       # (x, y) of first corner of an in-progress box
+        "status_msg": "",
     }
 
 
@@ -249,8 +283,8 @@ def start_new_video(state: dict) -> dict:
     return state
 
 
-def render_current_frame_with_points(state: dict) -> np.ndarray:
-    """Draw existing points for the current frame on top of the raw image."""
+def render_current_frame(state: dict) -> np.ndarray:
+    """Draw all finalized boxes + the pending first corner (if any) on top of the raw frame."""
     if not state["frame_paths"]:
         return np.zeros((480, 720, 3), dtype=np.uint8)
     idx = state["source_frame_indices"][state["cur_frame_pos"]]
@@ -258,12 +292,24 @@ def render_current_frame_with_points(state: dict) -> np.ndarray:
     pil = Image.fromarray(img)
     draw = ImageDraw.Draw(pil)
     for obj_id, obj in state["objects"].items():
-        pts = obj["points_by_frame"].get(state["cur_frame_pos"], {"positive": [], "negative": []})
-        for (x, y) in pts["positive"]:
-            r = POINT_RADIUS
-            draw.ellipse([x - r - 1, y - r - 1, x + r + 1, y + r + 1], outline=POINT_COLOR_OBJ_BORDER, width=2)
-            draw.ellipse([x - r, y - r, x + r, y + r], fill=POINT_COLOR_POS)
-            draw.text((x + r + 4, y - r), f"{obj_id}", fill=POINT_COLOR_OBJ_BORDER)
+        box = obj["boxes_by_frame"].get(state["cur_frame_pos"])
+        if not box:
+            continue
+        color = obj_color(obj_id)
+        x1, y1, x2, y2 = box
+        draw.rectangle([x1, y1, x2, y2], outline=color, width=BOX_LINE_WIDTH)
+        # tiny solid label corner with the obj_id
+        label = f"{obj_id}: {obj.get('label') or obj['instrument_id']}"
+        tx, ty = x1 + 4, max(0, y1 - 16)
+        draw.rectangle([tx - 2, ty - 2, tx + 8 * len(label), ty + 12], fill=color)
+        draw.text((tx, ty), label, fill=(0, 0, 0))
+    pc = state.get("pending_corner")
+    if pc is not None:
+        x, y = pc
+        r = CORNER_MARKER_RADIUS
+        draw.line([x - r, y, x + r, y], fill=CORNER_MARKER_COLOR, width=2)
+        draw.line([x, y - r, x, y + r], fill=CORNER_MARKER_COLOR, width=2)
+        draw.text((x + r + 4, y - r), "click opposite corner", fill=CORNER_MARKER_COLOR)
     return np.array(pil)
 
 
@@ -287,10 +333,12 @@ def status_text(state: dict, remaining: int | None = None) -> str:
     cur_obj = state["current_obj_id"]
     cur_ins = state["current_instrument_label"] or "(pick from dropdown)"
     n_objs = len(state["objects"])
+    pending = state.get("pending_corner")
+    phase = "click 2nd corner" if pending else ("click 1st corner" if state.get("current_instrument_id") else "pick instrument")
     remaining_str = f"  |  {remaining} videos remaining" if remaining is not None else ""
     return (
         f"**{vid}**  |  frame {pos+1}/{total}  (source idx {src_idx} of {n_frames})  |  "
-        f"obj_id={cur_obj}, instrument={cur_ins}  |  {n_objs} objects clicked total{remaining_str}"
+        f"obj_id={cur_obj}, instrument={cur_ins}, phase={phase}  |  {n_objs} objects boxed total{remaining_str}"
     )
 
 
@@ -300,7 +348,7 @@ def status_text(state: dict, remaining: int | None = None) -> str:
 
 def handler_start(state: dict):
     state = start_new_video(state)
-    img = render_current_frame_with_points(state) if state["video_id"] else None
+    img = render_current_frame(state) if state["video_id"] else None
     rem = count_remaining(connect())
     return state, status_text(state, remaining=rem), img, build_cutout_gallery(state)
 
@@ -326,69 +374,100 @@ def handler_image_click(state: dict, evt: gr.SelectData):
     if not state.get("video_id"):
         return state, "Start a session first.", None, []
     if not state.get("current_instrument_id"):
-        return state, "Pick an instrument from the dropdown before clicking.", render_current_frame_with_points(state), build_cutout_gallery(state)
+        return state, "Pick an instrument from the dropdown before drawing a box.", render_current_frame(state), build_cutout_gallery(state)
 
     x, y = float(evt.index[0]), float(evt.index[1])
     obj_id = state["current_obj_id"]
     frame_pos = state["cur_frame_pos"]
 
+    # Refuse to add another box if this obj already has one on this frame
+    existing_obj = state["objects"].get(obj_id)
+    if existing_obj and existing_obj["boxes_by_frame"].get(frame_pos):
+        rem = count_remaining(connect())
+        return (
+            state,
+            "This object already has a box on this frame. Press 'Next object' or 'Undo' first.\n\n" + status_text(state, remaining=rem),
+            render_current_frame(state),
+            build_cutout_gallery(state),
+        )
+
+    pending = state.get("pending_corner")
+    if pending is None:
+        # First corner click
+        state["pending_corner"] = (x, y)
+        rem = count_remaining(connect())
+        return (
+            state,
+            status_text(state, remaining=rem),
+            render_current_frame(state),
+            build_cutout_gallery(state),
+        )
+
+    # Second corner click — finalize box
+    x1, y1 = pending
+    box = normalize_box(x1, y1, x, y)
+    state["pending_corner"] = None
+
     if obj_id not in state["objects"]:
         state["objects"][obj_id] = {
             "instrument_id": state["current_instrument_id"],
             "label": state["current_instrument_label"],
-            "points_by_frame": {},
+            "boxes_by_frame": {},
             "cutout": None,
         }
 
-    pts = state["objects"][obj_id]["points_by_frame"].setdefault(
-        frame_pos, {"positive": [], "negative": []}
-    )
-    pts["positive"].append([x, y])
+    state["objects"][obj_id]["boxes_by_frame"][frame_pos] = box
 
+    # Cutout from first box for this object (best image of the instrument).
     if state["objects"][obj_id]["cutout"] is None:
         idx = state["source_frame_indices"][frame_pos]
         cur_img = safe_load_image(state["frame_paths"][idx])
-        state["objects"][obj_id]["cutout"] = extract_cutout(cur_img, x, y)
+        cutout = extract_box_cutout(cur_img, box)
+        if cutout is not None:
+            state["objects"][obj_id]["cutout"] = cutout
 
     rem = count_remaining(connect())
     return (
         state,
         status_text(state, remaining=rem),
-        render_current_frame_with_points(state),
+        render_current_frame(state),
         build_cutout_gallery(state),
     )
 
 
 def handler_next_object(state: dict):
-    """Commit current obj_id (if any points), advance to obj_id+1."""
+    """Advance to a fresh obj_id. Clears pending corner and forces re-pick of instrument."""
     if not state.get("video_id"):
         return state, "Start a session first."
     existing_ids = list(state["objects"].keys())
     state["current_obj_id"] = (max(existing_ids) + 1) if existing_ids else 1
     state["current_instrument_id"] = None
     state["current_instrument_label"] = ""
+    state["pending_corner"] = None
     rem = count_remaining(connect())
     return state, status_text(state, remaining=rem)
 
 
-def handler_undo_last_point(state: dict):
-    """Pop the most recent positive point from the current obj on current frame."""
-    obj_id = state["current_obj_id"]
-    frame_pos = state["cur_frame_pos"]
-    obj = state["objects"].get(obj_id)
-    if obj:
-        pts = obj["points_by_frame"].get(frame_pos)
-        if pts and pts["positive"]:
-            pts["positive"].pop()
-            if not pts["positive"] and not pts.get("negative"):
-                obj["points_by_frame"].pop(frame_pos, None)
-            if not obj["points_by_frame"]:
+def handler_undo(state: dict):
+    """Undo the most recent action:
+       1. If a corner is pending, clear it.
+       2. Else if current obj has a box on current frame, remove it (and the obj if empty).
+       3. Else: no-op.
+    """
+    if state.get("pending_corner") is not None:
+        state["pending_corner"] = None
+    else:
+        obj_id = state["current_obj_id"]
+        frame_pos = state["cur_frame_pos"]
+        obj = state["objects"].get(obj_id)
+        if obj and obj["boxes_by_frame"].pop(frame_pos, None) is not None:
+            if not obj["boxes_by_frame"]:
                 state["objects"].pop(obj_id, None)
     rem = count_remaining(connect())
     return (
         state,
         status_text(state, remaining=rem),
-        render_current_frame_with_points(state),
+        render_current_frame(state),
         build_cutout_gallery(state),
     )
 
@@ -400,11 +479,12 @@ def handler_next_frame(state: dict):
     state["current_obj_id"] = max(list(state["objects"].keys()) + [0]) + 1
     state["current_instrument_id"] = None
     state["current_instrument_label"] = ""
+    state["pending_corner"] = None
     rem = count_remaining(connect())
     return (
         state,
         status_text(state, remaining=rem),
-        render_current_frame_with_points(state),
+        render_current_frame(state),
         build_cutout_gallery(state),
     )
 
@@ -416,14 +496,14 @@ def handler_resample_frame(state: dict):
     n = len(state["frame_paths"])
     new_idx = random.randint(0, n - 1)
     state["source_frame_indices"][state["cur_frame_pos"]] = new_idx
-    # Drop points on the now-discarded frame slot for all objects
     for obj in state["objects"].values():
-        obj["points_by_frame"].pop(state["cur_frame_pos"], None)
+        obj["boxes_by_frame"].pop(state["cur_frame_pos"], None)
+    state["pending_corner"] = None
     rem = count_remaining(connect())
     return (
         state,
         status_text(state, remaining=rem),
-        render_current_frame_with_points(state),
+        render_current_frame(state),
         build_cutout_gallery(state),
     )
 
@@ -432,14 +512,14 @@ def handler_save_and_next(state: dict):
     if not state.get("video_id"):
         return state, "Nothing to save.", None, []
     if not state["objects"]:
-        return state, "No objects clicked — use Skip Video if there's nothing to label.", render_current_frame_with_points(state), []
+        return state, "No boxes drawn — use Skip video if there's nothing labelable.", render_current_frame(state), []
     try:
         path = save_prompt_set_to_manifest(state)
     except Exception as e:
-        return state, f"Save failed: {e}", render_current_frame_with_points(state), build_cutout_gallery(state)
+        return state, f"Save failed: {e}", render_current_frame(state), build_cutout_gallery(state)
     msg = f"Saved {path}. Loading next video..."
     state = start_new_video(state)
-    img = render_current_frame_with_points(state) if state["video_id"] else None
+    img = render_current_frame(state) if state["video_id"] else None
     rem = count_remaining(connect())
     return state, msg + "\n\n" + status_text(state, remaining=rem), img, build_cutout_gallery(state)
 
@@ -450,7 +530,7 @@ def handler_skip_video(state: dict):
     skipped_id = state["video_id"]
     mark_video_skipped(skipped_id)
     state = start_new_video(state)
-    img = render_current_frame_with_points(state) if state["video_id"] else None
+    img = render_current_frame(state) if state["video_id"] else None
     rem = count_remaining(connect())
     msg = f"Skipped {skipped_id}. Loading next..."
     return state, msg + "\n\n" + status_text(state, remaining=rem), img, build_cutout_gallery(state)
@@ -465,19 +545,19 @@ def build_ui() -> gr.Blocks:
 
     with gr.Blocks(title="SurgSAM-2 Click Collector") as demo:
         gr.Markdown(
-            "## SurgSAM-2 click collector\n"
-            "1. **Start session** to load the next un-clicked video.  "
-            "2. Pick an instrument.  "
-            "3. Click on it in the image (multiple clicks refine the same object).  "
-            "4. **Next object** when moving to a different instrument.  "
-            "5. **Next frame** after labelling everything on this frame.  "
-            "6. **Save & next video** after all 3 frames."
+            "## SurgSAM-2 box collector\n"
+            "1. **Start session** -> next un-labelled video loads.  "
+            "2. Pick an instrument from the dropdown.  "
+            "3. Click **two opposite corners** on the image to draw a box around it.  "
+            "4. **Next object** before moving to a different instrument (re-pick instrument).  "
+            "5. **Next frame** after boxing everything visible on this frame.  "
+            "6. **Save & next video** after all 3 frames are done."
         )
         status_md = gr.Markdown("Click 'Start session' to begin.")
 
         with gr.Row():
             with gr.Column(scale=3):
-                image = gr.Image(label="Click on instruments", interactive=True, height=540)
+                image = gr.Image(label="Click two opposite corners to draw a box", interactive=False, height=540)
                 with gr.Row():
                     instrument_dd = gr.Dropdown(
                         choices=instrument_choices,
@@ -486,8 +566,8 @@ def build_ui() -> gr.Blocks:
                         interactive=True,
                     )
                 with gr.Row():
-                    btn_next_obj = gr.Button("Next object (start clicking a different instrument)")
-                    btn_undo = gr.Button("Undo last click")
+                    btn_next_obj = gr.Button("Next object (different instrument)")
+                    btn_undo = gr.Button("Undo")
                 with gr.Row():
                     btn_resample = gr.Button("This frame is empty -> sample a different one")
                     btn_next_frame = gr.Button("Next frame", variant="primary")
@@ -496,17 +576,16 @@ def build_ui() -> gr.Blocks:
                     btn_skip = gr.Button("Skip this video (nothing labelable)")
                 btn_start = gr.Button("Start session", variant="primary")
             with gr.Column(scale=1):
-                gr.Markdown("### Reference cutouts")
-                cutout_gallery = gr.Gallery(label="Objects clicked", columns=1, height=540, allow_preview=False)
+                gr.Markdown("### Reference: boxes drawn")
+                cutout_gallery = gr.Gallery(label="Objects boxed", columns=1, height=540, allow_preview=False)
 
         state = gr.State(empty_state())
 
-        # Wire handlers
         btn_start.click(handler_start, inputs=[state], outputs=[state, status_md, image, cutout_gallery])
         instrument_dd.change(handler_pick_instrument, inputs=[state, instrument_dd], outputs=[state, status_md])
         image.select(handler_image_click, inputs=[state], outputs=[state, status_md, image, cutout_gallery])
         btn_next_obj.click(handler_next_object, inputs=[state], outputs=[state, status_md])
-        btn_undo.click(handler_undo_last_point, inputs=[state], outputs=[state, status_md, image, cutout_gallery])
+        btn_undo.click(handler_undo, inputs=[state], outputs=[state, status_md, image, cutout_gallery])
         btn_resample.click(handler_resample_frame, inputs=[state], outputs=[state, status_md, image, cutout_gallery])
         btn_next_frame.click(handler_next_frame, inputs=[state], outputs=[state, status_md, image, cutout_gallery])
         btn_save.click(handler_save_and_next, inputs=[state], outputs=[state, status_md, image, cutout_gallery])
