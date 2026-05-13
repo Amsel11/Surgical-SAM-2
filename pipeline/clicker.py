@@ -90,6 +90,19 @@ def list_frame_paths(frames_dir: str | Path) -> list[str]:
     return [str(f) for f in sorted(p.glob("*.jpg"))]
 
 
+def parse_source_idx(frame_path: str | Path) -> int | None:
+    """Extract source-index from filename like 'frame_00_src00000315.png' -> 315.
+
+    For local-sampled frames where the local-position differs from bp's frame index,
+    this lets us emit the CORRECT bp index in the saved prompts JSON. Returns None
+    for files that don't carry the marker (i.e. bp's own full extracts) — caller
+    falls back to the in-array position in that case.
+    """
+    import re
+    m = re.search(r"src(\d+)", Path(frame_path).name)
+    return int(m.group(1)) if m else None
+
+
 def sample_frame_positions(n_total: int, n_samples: int = N_PROMPT_FRAMES) -> list[int]:
     """Uniform stratified sampling: 25/50/75% by default for n_samples=3."""
     return [int(round((i + 1) * n_total / (n_samples + 1))) for i in range(n_samples)]
@@ -167,8 +180,16 @@ def save_prompt_set_to_manifest(state: dict) -> str:
     if not objects:
         raise ValueError("No objects clicked; nothing to save.")
 
+    # Map each local-array index to the TRUE source-frame index that bp will use.
+    # For locally-subsampled frames the filename carries the source idx; for full
+    # bp extracts the local position IS the source idx (parse returns None then).
+    def resolve_src(arr_idx: int) -> int:
+        parsed = parse_source_idx(state["frame_paths"][arr_idx])
+        return parsed if parsed is not None else arr_idx
+
     objects_by_frame: dict[str, list[dict]] = {}
-    for frame_pos, source_idx in enumerate(state["source_frame_indices"]):
+    for frame_pos, arr_idx in enumerate(state["source_frame_indices"]):
+        actual_src = resolve_src(arr_idx)
         per_frame: list[dict] = []
         for obj_id, obj in objects.items():
             box = obj["boxes_by_frame"].get(frame_pos)
@@ -181,21 +202,27 @@ def save_prompt_set_to_manifest(state: dict) -> str:
                 "negative": [],
             })
         if per_frame:
-            objects_by_frame[str(source_idx)] = per_frame
+            objects_by_frame[str(actual_src)] = per_frame
 
-    prompt_source_indices_used = [
-        state["source_frame_indices"][i]
-        for i in range(len(state["source_frame_indices"]))
-        if str(state["source_frame_indices"][i]) in objects_by_frame
-    ]
+    prompt_source_indices_used = []
+    for i in range(len(state["source_frame_indices"])):
+        actual_src = resolve_src(state["source_frame_indices"][i])
+        if str(actual_src) in objects_by_frame:
+            prompt_source_indices_used.append(actual_src)
 
     first_image = safe_load_image(state["frame_paths"][0])
     h, w = first_image.shape[:2]
 
+    # n_frames should be the FULL video's frame count (bp's count), pulled from
+    # the manifest videos row at save time so the JSON is correct downstream.
+    conn_q = connect()
+    row = conn_q.execute("SELECT n_frames FROM videos WHERE video_id = ?", (video_id,)).fetchone()
+    bp_n_frames = row["n_frames"] if row and row["n_frames"] else len(state["frame_paths"])
+
     payload = {
         "video": video_id,
         "resolution": [w, h],
-        "n_frames": len(state["frame_paths"]),
+        "n_frames": bp_n_frames,
         "prompt_frames": prompt_source_indices_used,
         "objects_by_frame": objects_by_frame,
     }
@@ -272,16 +299,16 @@ def objs_needing_rebox(state: dict) -> list[int]:
 
 
 def setup_rebox_for_current_frame(state: dict) -> None:
-    """Initialise the rebox queue when moving to a new frame.
+    """Initialise the rebox queue when moving to a new frame (or after resample).
        First existing-but-unboxed obj becomes rebox_current; rest queue up.
+       current_instrument_id/label are KEPT (they persist across frame transitions —
+       user's last pick survives, so they don't have to re-pick after every Next frame).
     """
     queue = objs_needing_rebox(state)
     state["rebox_current"] = queue.pop(0) if queue else None
     state["rebox_queue"] = queue
     state["pending_corner"] = None
     state["pending_box"] = None
-    state["current_instrument_id"] = None
-    state["current_instrument_label"] = ""
 
 
 def advance_rebox_or_finish(state: dict) -> None:
@@ -545,7 +572,12 @@ def handler_undo(state: dict):
 def handler_next_frame(state: dict):
     if not state.get("video_id"):
         return state, "Start a session first.", None, []
-    state["cur_frame_pos"] = min(state["cur_frame_pos"] + 1, len(state["source_frame_indices"]) - 1)
+    # If we're already on the LAST prompt frame, Next-frame implicitly means
+    # "save this video and move to the next one" — saves a click for the user.
+    last = len(state["source_frame_indices"]) - 1
+    if state["cur_frame_pos"] >= last:
+        return handler_save_and_next(state)
+    state["cur_frame_pos"] += 1
     setup_rebox_for_current_frame(state)
     rem = count_remaining(connect())
     return state, status_text(state, remaining=rem), render_current_frame(state), build_cutout_gallery(state)
