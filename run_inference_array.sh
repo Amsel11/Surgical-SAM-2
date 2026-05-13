@@ -41,18 +41,20 @@ fi
 PJSON="${PJSONS[$IDX]}"
 
 # Derive paths
-BASENAME=$(basename "$PJSON" .json)              # e.g. DG_whip_16598313
-FRAMES_DIR=/gpfs/data/oermannlab/private_data/whip/frames_attempt2/$BASENAME
+BASENAME=$(basename "$PJSON" .json)              # e.g. DG_whip_16598313_seed1_manual_box
+# Strip trailing _seed<N>_<method> if present, else use BASENAME as-is.
+VIDEO_ID=$(echo "$BASENAME" | sed -E 's/_seed[0-9]+_[A-Za-z_]+$//')
+FRAMES_DIR=/gpfs/data/oermannlab/private_data/whip/frames_attempt2/$VIDEO_ID
 SEED=${SEED:-1}
-OUT_DIR="$REPO/results/$BASENAME/seed_$SEED"
+OUT_DIR="$REPO/results/$VIDEO_ID/seed_$SEED"
 
 # Idempotency
 if [ -f "$OUT_DIR/log.json" ]; then
-    echo "[$BASENAME] seed_$SEED already done ($OUT_DIR/log.json exists) — skipping"
+    echo "[$VIDEO_ID] seed_$SEED already done ($OUT_DIR/log.json exists) — skipping"
     exit 0
 fi
 if [ ! -d "$FRAMES_DIR" ]; then
-    echo "[$BASENAME] frames dir missing: $FRAMES_DIR" ; exit 1
+    echo "[$VIDEO_ID] frames dir missing: $FRAMES_DIR" ; exit 1
 fi
 
 # --- Venv (bootstrap on first job ever; subsequent jobs just activate) ---
@@ -71,7 +73,7 @@ source .venv/bin/activate
 
 # --- Run ---
 echo "============================================================"
-echo "[$BASENAME] seed=$SEED  node=$(hostname)  $(nvidia-smi --query-gpu=name --format=csv,noheader | head -1)"
+echo "[$VIDEO_ID] seed=$SEED  node=$(hostname)  $(nvidia-smi --query-gpu=name --format=csv,noheader | head -1)"
 echo "Prompts: $PJSON"
 echo "Frames:  $FRAMES_DIR"
 echo "Output:  $OUT_DIR"
@@ -85,4 +87,4 @@ python run_on_video.py \
     --fps 1.0 \
     --no-overlay-jpgs
 
-echo "[$BASENAME] done at $(date -Iseconds)"
+echo "[$VIDEO_ID] done at $(date -Iseconds)"
