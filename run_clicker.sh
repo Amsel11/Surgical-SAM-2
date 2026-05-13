@@ -1,6 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=surgsam2_clicker
-#SBATCH --partition=cpu_dev
+#SBATCH --partition=oermannlab
+#SBATCH --gres=gpu:a100:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=16G
 #SBATCH --time=04:00:00
@@ -26,8 +27,12 @@ if [ ! -d .venv ]; then
 fi
 source .venv/bin/activate
 
-# Ensure gradio is installed (idempotent)
-python -c "import gradio" 2>/dev/null || uv pip install --quiet "gradio>=4.0,<5.0" 2>/dev/null || pip install --quiet "gradio>=4.0,<5.0"
+# Ensure gradio 5.x is installed (4.x breaks with newer huggingface_hub).
+# Cheap import probe; force-upgrade only if missing or stale.
+if ! python -c "import gradio; assert int(gradio.__version__.split('.')[0]) >= 5" 2>/dev/null; then
+    echo "Installing/upgrading gradio >= 5..."
+    uv pip install --upgrade --quiet "gradio>=5.0,<6.0" 2>/dev/null || pip install --upgrade --quiet "gradio>=5.0,<6.0"
+fi
 
 PORT=${CLICKER_PORT:-9876}
 
