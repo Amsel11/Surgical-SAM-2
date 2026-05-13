@@ -40,7 +40,7 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 PROMPTS_DIR = REPO_ROOT / "prompts"
 N_PROMPT_FRAMES = 3
-CUTOUT_LONG_SIDE = 200
+CUTOUT_LONG_SIDE = 140
 BOX_LINE_WIDTH = 3
 CORNER_MARKER_RADIUS = 8
 CORNER_MARKER_COLOR = (255, 255, 50)
@@ -310,8 +310,8 @@ def commit_pending_new_obj(state: dict) -> None:
     state["current_obj_id"] = obj_id + 1
     state["pending_box"] = None
     state["pending_corner"] = None
-    state["current_instrument_id"] = None
-    state["current_instrument_label"] = ""
+    # NB: keep current_instrument_id/label so the dropdown stays on the user's pick.
+    # Lets them chain multiple boxes of the same instrument. To switch, pick another.
 
 
 def start_new_video(state: dict) -> dict:
@@ -445,10 +445,10 @@ def handler_pick_instrument(state: dict, instrument_label_value):
         if value == instrument_label_value:
             state["current_instrument_label"] = label
             break
-    # Auto-commit if a box is waiting.
+    # Auto-commit if a box is waiting. Do NOT reset the dropdown — user keeps their
+    # selection across commits, can chain same-instrument boxes, picks different to switch.
     if state.get("pending_box") is not None:
         commit_pending_new_obj(state)
-        return state, status_text(state, remaining=rem), gr.update(value=None)
     return state, status_text(state, remaining=rem), gr.update()
 
 
@@ -638,7 +638,13 @@ def build_ui() -> gr.Blocks:
                 btn_start = gr.Button("Start session", variant="primary")
             with gr.Column(scale=1):
                 gr.Markdown("### Reference: boxes drawn")
-                cutout_gallery = gr.Gallery(label="Objects boxed", columns=1, height=540, allow_preview=False)
+                cutout_gallery = gr.Gallery(
+                    label="Objects boxed",
+                    columns=3,
+                    height=540,
+                    allow_preview=False,
+                    object_fit="contain",
+                )
 
         state = gr.State(empty_state())
 
