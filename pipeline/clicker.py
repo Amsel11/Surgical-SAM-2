@@ -38,6 +38,9 @@ SEED = 1
 PROMPT_METHOD = "manual_box"
 DEFAULT_INSTRUMENT = "unknown_instrument"
 
+# image_annotator refuses None-image at init, so we hand it a tiny placeholder.
+PLACEHOLDER_IMAGE = np.full((100, 100, 3), 32, dtype=np.uint8)
+
 # Per-object box colors; cycled by index. Used as label_colors for the annotator.
 OBJ_COLORS = [
     (60, 200, 255),   # cyan
@@ -226,7 +229,7 @@ def load_video_into_state(state: dict) -> tuple[dict, dict | None]:
     conn = connect()
     row = fetch_next_pending_video(conn)
     if row is None:
-        return empty_state(), None
+        return empty_state(), {"image": PLACEHOLDER_IMAGE, "boxes": []}
     frames = list_frame_paths(row["frames_dir"])
     if not frames:
         mark_video_skipped(row["video_id"])
@@ -318,7 +321,7 @@ def build_ui() -> gr.Blocks:
         status_md = gr.Markdown("Click 'Start session' to begin.")
 
         annotator = image_annotator(
-            value={"image": None, "boxes": []},
+            value={"image": PLACEHOLDER_IMAGE, "boxes": []},
             label_list=instrument_ids,
             label_colors=label_colors,
             height=620,
