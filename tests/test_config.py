@@ -30,10 +30,15 @@ def _stub_env(monkeypatch):
 
 
 def _compose(overrides: list[str]) -> dict:
-    """Helper: compose the default config with given CLI-style overrides."""
+    """Helper: compose the default config with given CLI-style overrides.
+
+    Pops `video_index` to match what `pipeline.run.main` does before pydantic
+    validation (it's a runtime selector, not part of the schema)."""
     with initialize_config_dir(config_dir=str(CONFIG_DIR), version_base=None):
         cfg = compose(config_name="config", overrides=overrides)
-    return OmegaConf.to_container(cfg, resolve=True)
+    cfg_dict = OmegaConf.to_container(cfg, resolve=True)
+    cfg_dict.pop("video_index", None)
+    return cfg_dict
 
 
 # ----------------------------------------------------------------------------

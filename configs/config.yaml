@@ -15,6 +15,11 @@
 name: ???
 description: ""
 
+# Optional runtime selector — set to an integer 0..(N-1) to process only the
+# i-th video in the resolved scope (use with `sbatch --array=0-N video_index=$SLURM_ARRAY_TASK_ID`).
+# Not part of the schema; popped before pydantic validates.
+video_index: null
+
 # ── scope ────────────────────────────────────────────────────────────────────
 scope:
   cohort: whip
