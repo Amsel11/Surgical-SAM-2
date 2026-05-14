@@ -20,13 +20,17 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
 
-# Override with $SURGSAM_MANIFEST=/path/to/manifest.db for testing.
-DEFAULT_DB_PATH = Path(os.environ.get("SURGSAM_MANIFEST", REPO_ROOT / "manifest.db"))
+
+def _default_db_path() -> Path:
+    """Resolved at call time so it picks up SURGSAM_MANIFEST set by load_dotenv()
+    *after* this module was imported (the orchestrator + clicker both do that).
+    """
+    return Path(os.environ.get("SURGSAM_MANIFEST", REPO_ROOT / "manifest.db"))
 
 
 def connect(db_path: Path | str | None = None) -> sqlite3.Connection:
     """Open the manifest. Creates schema on first call. Safe to call repeatedly."""
-    path = Path(db_path) if db_path else DEFAULT_DB_PATH
+    path = Path(db_path) if db_path else _default_db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     first_time = not path.exists()
 
@@ -58,4 +62,4 @@ def transaction(conn: sqlite3.Connection):
 
 
 def db_path() -> Path:
-    return DEFAULT_DB_PATH
+    return _default_db_path()

@@ -666,7 +666,7 @@ def handler_redo_video(state: dict):
     """Force-overwrite the existing prompt_set for the currently-displayed video.
        Sets its DB row to status='pending' (or deletes), clears prompt_objects, then loads fresh."""
     if not state.get("video_id"):
-        return state, "No video loaded — select one first.", None, [], fetch_video_table_rows()
+        return state, "No video loaded — select one first.", None, [], fetch_video_table_rows(), active_dd_update(state)
     video_id = state["video_id"]
     conn = connect()
     with transaction(conn):
@@ -1024,8 +1024,15 @@ def main(argv: list[str] | None = None) -> int:
       --prompts-dir DIR  : where JSON files go (default ./prompts).
       --dry-run          : run the full UI but make Save buttons no-ops.
                            Banner turns red. No file or DB write occurs.
+
+    SURGSAM_MANIFEST and other paths are read from .env at the repo root via
+    python-dotenv. Without that, pipeline.db falls back to ./manifest.db, which
+    is usually NOT the one with your 38 videos in it.
     """
     import argparse
+    from dotenv import load_dotenv
+    load_dotenv(REPO_ROOT / ".env")
+
     global SEED, PROMPT_METHOD, PROMPTS_DIR, DRY_RUN
     p = argparse.ArgumentParser(description="Gradio click collector")
     p.add_argument("--port", type=int, default=9876)
