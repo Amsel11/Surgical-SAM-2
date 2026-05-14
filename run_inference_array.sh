@@ -29,14 +29,18 @@ cd "$REPO"
 mkdir -p logs
 
 # --- Pick the prompts JSON for this array task ---
-mapfile -t PJSONS < <(ls prompts/*.json 2>/dev/null | sort)
+# SEED env var selects which prompt-set generation to run: SEED=1 only picks
+# prompts/*_seed1_*.json, SEED=2 only seed2, etc. Without filtering we'd
+# accidentally mix seeds when seed=1 and seed=2 JSONs coexist in prompts/.
+SEED=${SEED:-1}
+mapfile -t PJSONS < <(ls prompts/*_seed${SEED}_*.json 2>/dev/null | sort)
 N=${#PJSONS[@]}
 if [ $N -eq 0 ]; then
-    echo "No prompts/*.json files found. Click first." ; exit 1
+    echo "No prompts/*_seed${SEED}_*.json files found. Click first." ; exit 1
 fi
 IDX="${SLURM_ARRAY_TASK_ID:-0}"
 if [ "$IDX" -ge "$N" ]; then
-    echo "SLURM_ARRAY_TASK_ID=$IDX is out of range (have $N prompts)" ; exit 1
+    echo "SLURM_ARRAY_TASK_ID=$IDX is out of range (have $N prompts for seed=$SEED)" ; exit 1
 fi
 PJSON="${PJSONS[$IDX]}"
 
@@ -45,7 +49,6 @@ BASENAME=$(basename "$PJSON" .json)              # e.g. DG_whip_16598313_seed1_m
 # Strip trailing _seed<N>_<method> if present, else use BASENAME as-is.
 VIDEO_ID=$(echo "$BASENAME" | sed -E 's/_seed[0-9]+_[A-Za-z_]+$//')
 FRAMES_DIR=/gpfs/data/oermannlab/private_data/whip/frames_attempt2/$VIDEO_ID
-SEED=${SEED:-1}
 OUT_DIR="$REPO/results/$VIDEO_ID/seed_$SEED"
 
 # Idempotency
