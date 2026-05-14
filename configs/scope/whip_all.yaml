@@ -1,0 +1,5 @@
+# @package scope
+# All whip videos, seed 1.
+cohort: whip
+videos: all
+seed: 1

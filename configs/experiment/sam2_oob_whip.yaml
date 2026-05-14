@@ -1,0 +1,11 @@
+# @package _global_
+# Out-of-box SAM 2.1 (no surgical finetune) on whip cohort. Ablation level 1.
+#
+# Run: python -m pipeline run +experiment=sam2_oob_whip
+defaults:
+  - override /scope: whip_all
+  - override /stage1_prompting: manual_box
+  - override /stage2_inference: sam2
+
+name: sam2_oob_whip_v1
+description: Stock SAM 2.1 hiera-s, manual_box prompts, whip cohort

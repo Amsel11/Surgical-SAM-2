@@ -1,0 +1,8 @@
+# @package stage1_prompting
+# Stub for later: YOLO-derived boxes. Not implemented (raises NotImplementedError).
+method: yolo
+source: ./weights/yolov8_instruments.pt    # placeholder
+n_prompt_frames: 3
+sample_strategy: stratified_uniform
+resample_empty: false
+instrument_filter: [all]

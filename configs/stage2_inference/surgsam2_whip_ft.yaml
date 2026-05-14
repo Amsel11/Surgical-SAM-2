@@ -1,0 +1,13 @@
+# @package stage2_inference
+# SurgSAM-2 further fine-tuned on the whip cohort. Placeholder until training
+# of this checkpoint completes (Phase 3 of the project plan).
+model: surgsam2_whip_ft
+checkpoint: ${oc.env:BP_REPO,.}/checkpoints/sam2.1_hiera_s_endo18_whip_ft.pth
+config: configs/sam2.1/sam2.1_hiera_s.yaml
+device: cuda:0
+bidirectional: true
+outputs:
+  masks: true
+  overlay_video: true
+  overlay_jpgs: false
+  preview_small: true

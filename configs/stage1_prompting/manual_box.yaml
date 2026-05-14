@@ -1,0 +1,8 @@
+# @package stage1_prompting
+# Boxes drawn in the Gradio clicker, stored in the manifest's prompt_sets table.
+method: manual_box
+source: clicker_db
+n_prompt_frames: 3
+sample_strategy: stratified_uniform   # frames at 25/50/75%
+resample_empty: true
+instrument_filter: [all]

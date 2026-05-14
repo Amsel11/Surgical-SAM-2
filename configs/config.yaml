@@ -1,0 +1,32 @@
+# Top-level pipeline config.
+# Run with:
+#   python -m pipeline run name=test +experiment=surgsam2_oob_whip
+#
+# Hydra composes the four `defaults:` groups below into one resolved config.
+# Override any leaf from the CLI, e.g.:
+#   python -m pipeline run +experiment=sam2_oob_whip stage2_inference.bidirectional=false
+
+defaults:
+  - scope: whip_all
+  - stage1_prompting: manual_box
+  - stage2_inference: surgsam2
+  - _self_           # _self_ comes last so this file's values win over group defaults
+
+# Required: set per run, either via CLI (`name=foo`) or in an experiment file.
+name: ???
+description: ""
+
+infrastructure:
+  # Resolved from .env (python-dotenv loads it at startup). Defaults provided
+  # so the schema validates even on a fresh checkout.
+  frames_root:   ${oc.env:BP_FRAMES_ROOT,/gpfs/data/oermannlab/private_data/whip/frames_attempt2}
+  results_root:  ${oc.env:BP_RESULTS_ROOT,/gpfs/data/oermannlab/users/schula12/Surgical-SAM-2/results}
+  manifest_db:   ${oc.env:SURGSAM_MANIFEST,./local_manifest.db}
+  slurm:
+    partition: oermannlab,a100_short
+    exclude: a100-8003
+    time: "03:00:00"
+    array_concurrency: 8
+
+stage3_eval:
+  enabled: false
