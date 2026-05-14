@@ -283,13 +283,21 @@ def main():
 
     # --- Add prompts ---
     # Build a normalized list of (frame_idx, obj_id, points, labels, box) calls.
+    # Prompts JSONs from the clicker use source-frame indices; the SAM2 loader
+    # is in loader-space (0..N-1 after prepare_loader_dir's rename), so we
+    # subtract source_offset and drop out-of-range entries with a warning.
     import json as _json
     prompt_calls = []
     if args.prompts_json:
         with open(args.prompts_json) as fp:
             pj = _json.load(fp)
         for frame_str, objs in pj.get("objects_by_frame", {}).items():
-            fidx = int(frame_str)
+            src_idx = int(frame_str)
+            fidx = src_idx - source_offset
+            if fidx < 0 or fidx >= len(frame_names):
+                print(f"WARNING: prompt at source frame {src_idx} (loader idx {fidx}) "
+                      f"out of range [0, {len(frame_names)}) — skipping")
+                continue
             for o in objs:
                 pos = o.get("positive", []) or []
                 neg = o.get("negative", []) or []
@@ -342,34 +350,31 @@ def main():
     # --- Propagate through video and write outputs ---
     H = state["video_height"]
     W = state["video_width"]
-    print(f"Propagating across {len(frame_names)} frames at {W}x{H} ...")
-
-    # Write the overlay as H.264 via the bundled imageio-ffmpeg binary so the
-    # resulting mp4 plays inline in browsers / Jupyter. OpenCV's mp4v fourcc
-    # produces MPEG-4 Part 2 which Firefox/Chrome refuse to play.
-    ffmpeg_proc = None
     overlay_video_path = out_dir / "overlay.mp4"
-    if not args.no_overlay_video:
-        import imageio_ffmpeg
-        ffmpeg_bin = imageio_ffmpeg.get_ffmpeg_exe()
-        ffmpeg_proc = subprocess.Popen(
-            [ffmpeg_bin, "-y", "-loglevel", "error",
-             "-f", "rawvideo", "-pix_fmt", "bgr24",
-             "-s", f"{W}x{H}", "-r", f"{src_fps}", "-i", "-",
-             "-c:v", "libx264", "-pix_fmt", "yuv420p",
-             "-movflags", "+faststart", str(overlay_video_path)],
-            stdin=subprocess.PIPE,
-        )
 
+    # SAM2's propagate_in_video is forward-only by default starting from the
+    # earliest prompt frame. For 3-anchor click protocols at 25/50/75% that
+    # silently skips the first 25% of every video. We run a reverse pass first
+    # (start_anchor -> 0) then a forward pass (start_anchor -> end), giving
+    # full coverage. mp4 is then encoded from the per-frame overlay JPGs in
+    # numerical order (streaming the forward pass alone won't work because
+    # frames need to land in temporal order).
+    if not prompt_calls:
+        raise RuntimeError("No valid prompts after range filtering — nothing to propagate")
+    first_anchor_idx = min(f for f, *_ in prompt_calls)
+    print(f"Propagating bidirectionally from anchor {first_anchor_idx} across {len(frame_names)} frames at {W}x{H} ...")
+
+    # Overlay JPGs are written to overlay/ during propagation regardless of
+    # --no-overlay-jpgs (the mp4 assembly needs them); deleted at the end if
+    # the flag was set.
     import time, datetime, json as _json
     t_start = time.time()
-    # Per-object accumulators for the QA log.
     mask_area_sum = {}
     mask_area_count = {}
     empty_frames = {}
+    written_frames = set()
 
-    n_processed = 0
-    for out_frame_idx, out_obj_ids, out_mask_logits in predictor.propagate_in_video(state):
+    def write_frame_output(out_frame_idx, out_obj_ids, out_mask_logits):
         # Combine all per-object masks into one palette PNG (later object id wins on overlap).
         combined = np.zeros((H, W), dtype=np.uint8)
         per_obj_masks = []
@@ -386,32 +391,57 @@ def main():
         mask_img.putpalette(DAVIS_PALETTE)
         mask_img.save(masks_dir / f"{out_frame_idx:05d}.png")
 
-        if not args.no_overlay_jpgs:
-            frame_path = os.path.join(loader_dir, frame_names[out_frame_idx])
-            img_bgr = cv2.imread(frame_path)
-            if img_bgr is None:
-                continue
-            overlay = img_bgr
-            for oid, m in per_obj_masks:
-                overlay = overlay_mask(overlay, m, davis_color_bgr(oid), alpha=0.5)
-            cv2.imwrite(str(overlay_dir / f"{out_frame_idx:05d}.jpg"), overlay)
-            if ffmpeg_proc is not None:
-                ffmpeg_proc.stdin.write(overlay.tobytes())
-        elif ffmpeg_proc is not None:
-            # Still write the mp4 even when skipping per-frame JPGs.
-            frame_path = os.path.join(loader_dir, frame_names[out_frame_idx])
-            img_bgr = cv2.imread(frame_path)
-            if img_bgr is None:
-                continue
-            overlay = img_bgr
-            for oid, m in per_obj_masks:
-                overlay = overlay_mask(overlay, m, davis_color_bgr(oid), alpha=0.5)
-            ffmpeg_proc.stdin.write(overlay.tobytes())
-        n_processed += 1
+        frame_path = os.path.join(loader_dir, frame_names[out_frame_idx])
+        img_bgr = cv2.imread(frame_path)
+        if img_bgr is None:
+            return
+        overlay = img_bgr
+        for oid, m in per_obj_masks:
+            overlay = overlay_mask(overlay, m, davis_color_bgr(oid), alpha=0.5)
+        cv2.imwrite(str(overlay_dir / f"{out_frame_idx:05d}.jpg"), overlay)
+        written_frames.add(out_frame_idx)
 
-    if ffmpeg_proc is not None:
-        ffmpeg_proc.stdin.close()
-        ffmpeg_proc.wait()
+    # Reverse pass: first_anchor -> 0 (inclusive of first_anchor)
+    print(f"  Reverse pass: {first_anchor_idx} -> 0 ...")
+    for out_frame_idx, out_obj_ids, out_mask_logits in predictor.propagate_in_video(state, reverse=True):
+        write_frame_output(out_frame_idx, out_obj_ids, out_mask_logits)
+
+    # Forward pass: first_anchor -> end (skip first_anchor, already done)
+    print(f"  Forward pass: {first_anchor_idx} -> {len(frame_names) - 1} ...")
+    for out_frame_idx, out_obj_ids, out_mask_logits in predictor.propagate_in_video(state):
+        if out_frame_idx in written_frames:
+            continue
+        write_frame_output(out_frame_idx, out_obj_ids, out_mask_logits)
+
+    n_processed = len(written_frames)
+
+    # Encode mp4 from overlay JPGs in numerical order.
+    if not args.no_overlay_video:
+        import imageio_ffmpeg
+        ffmpeg_bin = imageio_ffmpeg.get_ffmpeg_exe()
+        jpgs = sorted(overlay_dir.glob("*.jpg"))
+        if jpgs:
+            concat_path = out_dir / "_concat.txt"
+            with open(concat_path, "w") as f:
+                for j in jpgs:
+                    f.write(f"file '{j.name}'\n")
+                    f.write(f"duration {1.0 / src_fps}\n")
+                # ffmpeg concat demuxer needs the last file repeated for duration to apply
+                f.write(f"file '{jpgs[-1].name}'\n")
+            print(f"Encoding overlay.mp4 from {len(jpgs)} frames ...")
+            subprocess.run(
+                [ffmpeg_bin, "-y", "-loglevel", "error",
+                 "-f", "concat", "-safe", "0", "-i", str(concat_path),
+                 "-c:v", "libx264", "-pix_fmt", "yuv420p", "-vsync", "vfr",
+                 "-movflags", "+faststart", str(overlay_video_path)],
+                cwd=overlay_dir, check=False,
+            )
+            concat_path.unlink(missing_ok=True)
+
+    # Clean up per-frame JPGs if not requested.
+    if args.no_overlay_jpgs:
+        for j in overlay_dir.glob("*.jpg"):
+            j.unlink()
 
     wall_seconds = time.time() - t_start
     mean_mask_area = {str(oid): mask_area_sum[oid] / max(mask_area_count[oid], 1)
