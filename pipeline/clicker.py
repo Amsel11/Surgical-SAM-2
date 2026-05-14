@@ -44,8 +44,12 @@ CUTOUT_LONG_SIDE = 220
 BOX_LINE_WIDTH = 3
 CORNER_MARKER_RADIUS = 8
 CORNER_MARKER_COLOR = (255, 255, 50)
-SEED = 1  # MVP: single seed. Multi-seed flow in a later iteration.
-PROMPT_METHOD = "manual_box"
+
+# Write target — overridden by CLI flags in main(). Keep as module-level
+# globals so existing functions don't need an extra Config parameter.
+SEED: int = 1
+PROMPT_METHOD: str = "manual_box"
+DRY_RUN: bool = False    # if True, Save buttons are no-ops with a UI notice
 
 # Per-object box colors; cycled by obj_id.
 OBJ_COLORS = [
@@ -214,11 +218,18 @@ def count_remaining(conn) -> int:
 
 
 def save_prompt_set_to_manifest(state: dict) -> str:
-    """Atomically write prompts JSON + insert prompt_set + prompt_objects rows."""
+    """Atomically write prompts JSON + insert prompt_set + prompt_objects rows.
+
+    Under DRY_RUN, returns a placeholder string without touching disk or DB —
+    so the user can exercise the click flow on a contested seed without
+    overwriting it.
+    """
     video_id = state["video_id"]
     objects = state["objects"]
     if not objects:
         raise ValueError("No objects clicked; nothing to save.")
+    if DRY_RUN:
+        return f"[DRY RUN] would save {video_id} seed={SEED} method={PROMPT_METHOD} with {len(objects)} objs"
 
     # Map each local-array index to the TRUE source-frame index that bp will use.
     # For locally-subsampled frames the filename carries the source idx; for full
@@ -312,6 +323,8 @@ def save_prompt_set_to_manifest(state: dict) -> str:
 
 def mark_video_skipped(video_id: str) -> None:
     """Record a 'failed' prompt_set so we don't re-show this video."""
+    if DRY_RUN:
+        return
     conn = connect()
     PROMPTS_DIR.mkdir(exist_ok=True)
     conn.execute(
@@ -901,7 +914,22 @@ def handler_skip_video(state: dict):
 def build_ui() -> gr.Blocks:
     instrument_choices = load_instrument_choices()
 
-    with gr.Blocks(title="SurgSAM-2 Click Collector") as demo:
+    # Banner spelling out where this session will write. Visible at the top so
+    # the user can confirm before clicking. DRY_RUN paints it red.
+    if DRY_RUN:
+        target_banner = (
+            f"### ⚠️ DRY RUN — nothing is being saved\n"
+            f"Target (would be): **seed={SEED}, method={PROMPT_METHOD}** "
+            f"under `{PROMPTS_DIR}/`. Save buttons are no-ops."
+        )
+    else:
+        target_banner = (
+            f"### Writing to: **seed={SEED}, method=`{PROMPT_METHOD}`** "
+            f"under `{PROMPTS_DIR}/`"
+        )
+
+    with gr.Blocks(title=f"SurgSAM-2 Clicker (seed={SEED}, method={PROMPT_METHOD})") as demo:
+        gr.Markdown(target_banner)
         gr.Markdown(
             "## SurgSAM-2 box collector\n"
             "**Frame 1** (any frame with no prior objects): draw a box around an instrument "
@@ -985,11 +1013,42 @@ def build_ui() -> gr.Blocks:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Launch the click collector.
+
+    Write-target control (avoids stomping on existing prompt_sets):
+      --seed N           : write under seed=N (default 1). Use --seed 2 to
+                            iterate on UX without touching seed=1 data.
+      --method NAME      : prompt_method tag (default 'manual_box'). Useful
+                            for marking experimental runs (e.g.
+                            --method manual_box_v2_2026_05_14).
+      --prompts-dir DIR  : where JSON files go (default ./prompts).
+      --dry-run          : run the full UI but make Save buttons no-ops.
+                           Banner turns red. No file or DB write occurs.
+    """
     import argparse
+    global SEED, PROMPT_METHOD, PROMPTS_DIR, DRY_RUN
     p = argparse.ArgumentParser(description="Gradio click collector")
     p.add_argument("--port", type=int, default=9876)
-    p.add_argument("--host", default="0.0.0.0", help="Bind interface. Use 0.0.0.0 on HPC for tunnel access.")
+    p.add_argument("--host", default="0.0.0.0",
+                   help="Bind interface. Use 0.0.0.0 on HPC for tunnel access.")
+    p.add_argument("--seed", type=int, default=SEED,
+                   help=f"Seed for prompt_sets row (default {SEED}). "
+                        f"Use a different value to test without overwriting prior work.")
+    p.add_argument("--method", default=PROMPT_METHOD,
+                   help=f"prompt_method tag (default {PROMPT_METHOD!r}).")
+    p.add_argument("--prompts-dir", type=Path, default=PROMPTS_DIR,
+                   help=f"Directory for prompts JSON output (default {PROMPTS_DIR}).")
+    p.add_argument("--dry-run", action="store_true",
+                   help="UI works but Save buttons are no-ops. Nothing is written.")
     args = p.parse_args(argv)
+
+    SEED = args.seed
+    PROMPT_METHOD = args.method
+    PROMPTS_DIR = args.prompts_dir
+    DRY_RUN = args.dry_run
+
+    print(f"Clicker write target: seed={SEED} method={PROMPT_METHOD} dir={PROMPTS_DIR}"
+          + ("  [DRY RUN]" if DRY_RUN else ""))
 
     demo = build_ui()
     demo.queue().launch(
