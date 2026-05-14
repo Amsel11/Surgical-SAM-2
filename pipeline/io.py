@@ -132,7 +132,11 @@ def encode_mp4_from_jpgs(jpg_dir: Path, output_mp4: Path, src_fps: float) -> boo
     if not jpgs:
         return False
 
-    concat_path = jpg_dir.parent / "_concat.txt"
+    # ffmpeg's concat demuxer resolves `file 'X.jpg'` paths *relative to the
+    # concat file's own directory*. Put the concat file IN jpg_dir so the bare
+    # basenames in it resolve correctly. (Previously we wrote it to
+    # jpg_dir.parent, which made ffmpeg look in the parent dir and fail.)
+    concat_path = jpg_dir / "_concat.txt"
     with open(concat_path, "w") as f:
         for j in jpgs:
             f.write(f"file '{j.name}'\n")
