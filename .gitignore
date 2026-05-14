@@ -24,3 +24,14 @@ archive/
 manifest.db
 manifest.db-wal
 manifest.db-shm
+
+# Local working state on olab-1 (the SQLite WAL files + working dirs)
+local_manifest.db
+local_manifest.db-wal
+local_manifest.db-shm
+local_frames/
+local_results/
+
+# Per-machine paths and credentials. Copy .env.example to .env and edit.
+.env
+.env.local
