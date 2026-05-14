@@ -52,17 +52,32 @@ def compute_inventory(
     prompts_dir: Path,
     instruments: dict,
     seed: int,
+    mask_scan_csv: Path | None = None,
 ) -> pd.DataFrame:
     """Walk previews_dir, join with the matching seed's prompts JSON, return
     a long-form DataFrame with one row per (video, obj_id).
+
+    If `mask_scan_csv` is provided (output of tools/scan_masks.py), we add
+    the *honest* in-anchor-span empty rate that distinguishes tracking
+    failure (empty between two anchors that both had this obj) from
+    ambiguous absence (empty before first anchor or after last anchor).
+    Status thresholds switch to `in_span_rate` whenever available — that's
+    the metric you want; the raw `empty_rate_overall` stays in the CSV
+    only for comparison.
 
     Expected layout (seed-batch as top level):
         previews_dir/
             <video_id>/
                 log.json
                 preview_small.mp4
-                ...
     """
+    # Pre-load mask-scan rows keyed by (video_id, obj_id) for fast join.
+    scan_map: dict[tuple[str, int], dict] = {}
+    if mask_scan_csv and mask_scan_csv.exists():
+        scan_df = pd.read_csv(mask_scan_csv)
+        for _, r in scan_df.iterrows():
+            scan_map[(r["video_id"], int(r["obj_id"]))] = r.to_dict()
+
     rows = []
     for vdir in sorted(previews_dir.iterdir()):
         if not vdir.is_dir():
@@ -92,15 +107,38 @@ def compute_inventory(
             n_anch = len(obj_anchors.get(obj_id, set()))
             empty = empty_counts.get(str(obj_id), 0)
             mean = mean_area.get(str(obj_id), 0.0)
-            empty_rate = empty / n_frames if n_frames else 0.0
+            empty_rate_overall = empty / n_frames if n_frames else 0.0
             area_frac = mean / frame_area if frame_area else 0.0
 
-            if empty_rate > 0.30 or n_anch < 2 or area_frac > 0.30:
-                status = "FAIL"
-            elif empty_rate > 0.10 or n_anch < 3:
-                status = "review"
+            # Pull mask-scan fields if available.
+            scan = scan_map.get((vid, obj_id))
+            in_span_rate = None
+            empty_in_span = empty_pre_span = empty_post_span = None
+            span_length = None
+            if scan is not None:
+                empty_in_span = int(scan.get("empty_in_span") or 0)
+                empty_pre_span = int(scan.get("empty_pre_span") or 0)
+                empty_post_span = int(scan.get("empty_post_span") or 0)
+                span_length = int(scan.get("span_length") or 0)
+                if scan.get("in_span_rate") not in (None, ""):
+                    in_span_rate = float(scan["in_span_rate"])
+
+            # Status: prefer in_span_rate when available — it isolates
+            # tracking drift from legitimate absence.
+            if in_span_rate is not None:
+                if in_span_rate > 0.30 or n_anch < 2 or area_frac > 0.30:
+                    status = "FAIL"
+                elif in_span_rate > 0.10 or n_anch < 3:
+                    status = "review"
+                else:
+                    status = "pass"
             else:
-                status = "pass"
+                if empty_rate_overall > 0.30 or n_anch < 2 or area_frac > 0.30:
+                    status = "FAIL"
+                elif empty_rate_overall > 0.10 or n_anch < 3:
+                    status = "review"
+                else:
+                    status = "pass"
 
             rows.append({
                 "video_id": vid,
@@ -109,7 +147,13 @@ def compute_inventory(
                 "n_frames": n_frames,
                 "n_anchors": n_anch,
                 "empty_count": empty,
-                "empty_rate": round(empty_rate, 4),
+                "empty_rate_overall": round(empty_rate_overall, 4),
+                # mask-scan fields (None if scan not present)
+                "empty_in_span": empty_in_span,
+                "empty_pre_span": empty_pre_span,
+                "empty_post_span": empty_post_span,
+                "span_length": span_length,
+                "in_span_rate": round(in_span_rate, 4) if in_span_rate is not None else None,
                 "mean_mask_area_px": round(mean, 1),
                 "area_fraction": round(area_frac, 4),
                 "status": status,
@@ -142,9 +186,11 @@ def plot_status_counts(df: pd.DataFrame, out: Path) -> None:
 
 def plot_empty_rate_by_anc(df: pd.DataFrame, out: Path) -> None:
     """Box plot of empty_rate grouped by anchor count. Proves the anc=1 problem."""
+    # Prefer in_span_rate when available; otherwise empty_rate_overall.
+    rate_col = "in_span_rate" if df["in_span_rate"].notna().any() else "empty_rate_overall"
     fig, ax = plt.subplots(figsize=(7, 4.5))
     groups = sorted(df["n_anchors"].unique())
-    data = [df[df["n_anchors"] == g]["empty_rate"].values * 100 for g in groups]
+    data = [df[df["n_anchors"] == g][rate_col].dropna().values * 100 for g in groups]
     bp = ax.boxplot(data, tick_labels=[f"n_anchors={g}\n(n={len(d)})" for g, d in zip(groups, data)],
                      patch_artist=True, showmeans=True)
     for patch in bp["boxes"]:
@@ -153,8 +199,9 @@ def plot_empty_rate_by_anc(df: pd.DataFrame, out: Path) -> None:
     # threshold lines
     ax.axhline(10, ls="--", color="#ff7f0e", alpha=0.5, label="review threshold (10%)")
     ax.axhline(30, ls="--", color="#d62728", alpha=0.5, label="fail threshold (30%)")
-    ax.set_ylabel("empty-frame rate (%)")
-    ax.set_title("Empty-frame rate vs number of anchor frames clicked")
+    ax.set_ylabel(f"{rate_col.replace('_', ' ')} (%)")
+    title_metric = "in-anchor-span empty rate" if rate_col == "in_span_rate" else "raw empty rate"
+    ax.set_title(f"{title_metric} vs number of anchor frames clicked")
     ax.legend(loc="upper right", fontsize=9)
     ax.set_ylim(-2, 100)
     fig.tight_layout()
@@ -297,15 +344,21 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--db", type=Path, default=Path("local_manifest.db"))
     ap.add_argument("--out-dir", type=Path, default=None,
                     help="default: local_results/seed_<N>/qc")
+    ap.add_argument("--mask-scan-csv", type=Path, default=None,
+                    help="Output of tools/scan_masks.py for this seed. When "
+                         "given, status uses in_span_rate (much more honest). "
+                         "default: <out-dir>/mask_scan.csv if present.")
     args = ap.parse_args(argv)
 
     seed_root = Path("local_results") / f"seed_{args.seed}"
     previews_dir = args.previews_dir or (seed_root / "previews")
     out_dir = args.out_dir or (seed_root / "qc")
     out_dir.mkdir(parents=True, exist_ok=True)
+    mask_scan_csv = args.mask_scan_csv or (out_dir / "mask_scan.csv")
 
     instruments = load_instruments(args.db, args.seed)
-    df = compute_inventory(previews_dir, args.prompts_dir, instruments, args.seed)
+    df = compute_inventory(previews_dir, args.prompts_dir, instruments,
+                           args.seed, mask_scan_csv if mask_scan_csv.exists() else None)
     if df.empty:
         print(f"No results for seed={args.seed} under {previews_dir}. "
               "Run inference first.")
@@ -327,8 +380,9 @@ def main(argv: list[str] | None = None) -> int:
     write_summary_md(df, out_dir / "qc_summary.md", args.seed, verdicts)
 
     counts = df["status"].value_counts().reindex(STATUS_ORDER, fill_value=0)
+    metric = "in_span_rate" if df["in_span_rate"].notna().any() else "empty_rate_overall (no mask scan)"
     print(f"Tier A QC for seed={args.seed}: {len(df)} pairs across "
-          f"{df['video_id'].nunique()} videos")
+          f"{df['video_id'].nunique()} videos  [metric: {metric}]")
     print(f"  pass:   {counts['pass']}")
     print(f"  review: {counts['review']}")
     print(f"  FAIL:   {counts['FAIL']}")
