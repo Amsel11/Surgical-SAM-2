@@ -1,0 +1,11 @@
+# @package _global_
+# Ablation level 5: SAM 3 fine-tuned on whip. Placeholder.
+# Run: python -m pipeline run +experiment=sam3_whip_ft
+
+name: sam3_whip_ft_v1
+description: SAM 3 + whip fine-tune, manual_box prompts
+
+stage2_inference:
+  model: sam3_whip_ft
+  checkpoint: ${oc.env:BP_REPO,.}/checkpoints/sam3_whip_ft.pth
+  config: configs/sam3/sam3_base.yaml

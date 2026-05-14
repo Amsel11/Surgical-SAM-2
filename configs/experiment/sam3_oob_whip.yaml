@@ -1,0 +1,11 @@
+# @package _global_
+# Ablation level 4: SAM 3 out-of-box (when released). Placeholder.
+# Run: python -m pipeline run +experiment=sam3_oob_whip
+
+name: sam3_oob_whip_v1
+description: SAM 3 out-of-box, manual_box prompts, whip cohort
+
+stage2_inference:
+  model: sam3
+  checkpoint: ${oc.env:BP_REPO,.}/checkpoints/sam3.pth
+  config: configs/sam3/sam3_base.yaml

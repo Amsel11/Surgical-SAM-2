@@ -1,32 +1,64 @@
-# Top-level pipeline config.
-# Run with:
-#   python -m pipeline run name=test +experiment=surgsam2_oob_whip
+# The grand orchestrating YAML. Every default lives here. An experiment under
+# configs/experiment/<name>.yaml overrides only the fields that differ for
+# that ablation condition.
 #
-# Hydra composes the four `defaults:` groups below into one resolved config.
-# Override any leaf from the CLI, e.g.:
+# Run:
+#   python -m pipeline run name=adhoc                           # use all defaults
+#   python -m pipeline run +experiment=surgsam2_oob_whip        # named ablation
 #   python -m pipeline run +experiment=sam2_oob_whip stage2_inference.bidirectional=false
+#
+# Every successful run drops a resolved-config snapshot next to its outputs
+# (results/<experiment>/<run>/_config.yaml) AND embeds it under log.json["config"]
+# so any result is fully reproducible from the artifacts alone.
 
-defaults:
-  - scope: whip_all
-  - stage1_prompting: manual_box
-  - stage2_inference: surgsam2
-  - _self_           # _self_ comes last so this file's values win over group defaults
-
-# Required: set per run, either via CLI (`name=foo`) or in an experiment file.
+# Required. Set per-run via CLI (name=...) or in an experiment file.
 name: ???
 description: ""
 
+# ── scope ────────────────────────────────────────────────────────────────────
+scope:
+  cohort: whip
+  videos: all                # 'all' | 'qc_pass' | 'failed_inference' | list[str]
+  seed: 1
+
+# ── stage 1: prompting ───────────────────────────────────────────────────────
+stage1_prompting:
+  method: manual_box         # manual_box | manual_click | yolo | dino | gt_box
+  source: clicker_db         # method-specific (e.g. path to YOLO weights)
+  n_prompt_frames: 3
+  sample_strategy: stratified_uniform
+  resample_empty: true
+  instrument_filter: [all]
+
+# ── stage 2: inference ───────────────────────────────────────────────────────
+stage2_inference:
+  model: surgsam2            # sam2 | surgsam2 | surgsam2_whip_ft | sam3 | sam3_whip_ft
+  checkpoint: ${oc.env:BP_REPO,.}/checkpoints/sam2.1_hiera_s_endo18.pth
+  config: configs/sam2.1/sam2.1_hiera_s.yaml
+  device: cuda:0
+  bidirectional: true
+  outputs:
+    masks: true
+    overlay_video: true
+    overlay_jpgs: false
+    preview_small: true
+
+# ── stage 3: evaluation (optional, needs GT) ─────────────────────────────────
+stage3_eval:
+  enabled: false
+  gt_source: null
+  metrics: [dice, iou]
+  filter:
+    qc_status: pass
+    exclude_bad_time_ranges: true
+
+# ── infrastructure (resolved from .env where possible) ───────────────────────
 infrastructure:
-  # Resolved from .env (python-dotenv loads it at startup). Defaults provided
-  # so the schema validates even on a fresh checkout.
-  frames_root:   ${oc.env:BP_FRAMES_ROOT,/gpfs/data/oermannlab/private_data/whip/frames_attempt2}
-  results_root:  ${oc.env:BP_RESULTS_ROOT,/gpfs/data/oermannlab/users/schula12/Surgical-SAM-2/results}
-  manifest_db:   ${oc.env:SURGSAM_MANIFEST,./local_manifest.db}
+  frames_root:  ${oc.env:BP_FRAMES_ROOT,/gpfs/data/oermannlab/private_data/whip/frames_attempt2}
+  results_root: ${oc.env:BP_RESULTS_ROOT,/gpfs/data/oermannlab/users/schula12/Surgical-SAM-2/results}
+  manifest_db:  ${oc.env:SURGSAM_MANIFEST,./local_manifest.db}
   slurm:
     partition: oermannlab,a100_short
     exclude: a100-8003
     time: "03:00:00"
     array_concurrency: 8
-
-stage3_eval:
-  enabled: false

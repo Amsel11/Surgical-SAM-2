@@ -1,5 +1,0 @@
-# @package scope
-# Only whip videos that passed automated QC. Used after the QC cycle completes.
-cohort: whip
-videos: qc_pass
-seed: 1

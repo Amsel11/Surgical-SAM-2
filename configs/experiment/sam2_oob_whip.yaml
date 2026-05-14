@@ -1,11 +1,12 @@
 # @package _global_
-# Out-of-box SAM 2.1 (no surgical finetune) on whip cohort. Ablation level 1.
+# Ablation level 1: stock SAM 2.1 hiera-s (no surgical fine-tuning), manual
+# boxes, whip cohort. Establishes the floor.
 #
 # Run: python -m pipeline run +experiment=sam2_oob_whip
-defaults:
-  - override /scope: whip_all
-  - override /stage1_prompting: manual_box
-  - override /stage2_inference: sam2
 
 name: sam2_oob_whip_v1
-description: Stock SAM 2.1 hiera-s, manual_box prompts, whip cohort
+description: Stock SAM 2.1 hiera-s, manual_box prompts, whip cohort, OOB
+
+stage2_inference:
+  model: sam2
+  checkpoint: ${oc.env:BP_REPO,.}/checkpoints/sam2.1_hiera_small.pt

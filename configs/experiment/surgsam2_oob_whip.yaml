@@ -1,12 +1,9 @@
 # @package _global_
-# Out-of-box SurgSAM-2 evaluation on the whip cohort with manual boxes.
-# This is the ablation baseline (no whip-specific finetuning).
+# Ablation level 2: SurgSAM-2 (Endo18 fine-tune of SAM 2.1 hiera-s).
+# Same prompts/scope as the OOB baseline; only the checkpoint changes.
 #
 # Run: python -m pipeline run +experiment=surgsam2_oob_whip
-defaults:
-  - override /scope: whip_all
-  - override /stage1_prompting: manual_box
-  - override /stage2_inference: surgsam2
 
 name: surgsam2_oob_whip_v1
 description: SurgSAM-2 (endo18 finetune) on whip, manual_box prompts, no whip-FT
+# Defaults already use surgsam2; nothing else to override.

@@ -1,0 +1,12 @@
+# @package _global_
+# Ablation level 3: SurgSAM-2 further fine-tuned on the whip cohort.
+# Placeholder until that checkpoint is produced (Phase 3 of project plan).
+#
+# Run: python -m pipeline run +experiment=surgsam2_whip_ft
+
+name: surgsam2_whip_ft_v1
+description: SurgSAM-2 + whip fine-tune, manual_box prompts
+
+stage2_inference:
+  model: surgsam2_whip_ft
+  checkpoint: ${oc.env:BP_REPO,.}/checkpoints/sam2.1_hiera_s_endo18_whip_ft.pth
