@@ -77,7 +77,8 @@ def render_one(results_dir: Path, frames_root: Path, src_fps: float = 1.0,
         print(f"[skip] {results_dir}: missing log.json or masks/")
         return False
 
-    out_mp4 = results_dir / "overlay.mp4"
+    # Use absolute path because ffmpeg runs with cwd=tmpdir below.
+    out_mp4 = (results_dir / "overlay.mp4").resolve()
     if out_mp4.exists() and not force:
         print(f"[skip] {results_dir}: overlay.mp4 exists (use --force to overwrite)")
         return False
@@ -155,7 +156,7 @@ def render_one(results_dir: Path, frames_root: Path, src_fps: float = 1.0,
         print(f"[{video_id}] wrote {out_mp4}")
 
         if make_preview:
-            preview_mp4 = results_dir / "preview_small.mp4"
+            preview_mp4 = (results_dir / "preview_small.mp4").resolve()
             subprocess.run(
                 [ffmpeg_bin, "-y", "-loglevel", "error",
                  "-i", str(out_mp4),

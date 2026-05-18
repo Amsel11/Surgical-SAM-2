@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH --job-name=scan_masks
-#SBATCH --partition=cpu_short
+#SBATCH --partition=cpu_medium
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=4G
-#SBATCH --time=01:00:00
+#SBATCH --time=04:00:00
 #SBATCH --output=logs/scan_masks_%j.out
 #SBATCH --error=logs/scan_masks_%j.err
 #

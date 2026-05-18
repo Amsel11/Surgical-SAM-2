@@ -191,7 +191,7 @@ def plot_empty_rate_by_anc(df: pd.DataFrame, out: Path) -> None:
     fig, ax = plt.subplots(figsize=(7, 4.5))
     groups = sorted(df["n_anchors"].unique())
     data = [df[df["n_anchors"] == g][rate_col].dropna().values * 100 for g in groups]
-    bp = ax.boxplot(data, tick_labels=[f"n_anchors={g}\n(n={len(d)})" for g, d in zip(groups, data)],
+    bp = ax.boxplot(data, labels=[f"n_anchors={g}\n(n={len(d)})" for g, d in zip(groups, data)],
                      patch_artist=True, showmeans=True)
     for patch in bp["boxes"]:
         patch.set_facecolor("#4c72b0")
@@ -266,7 +266,8 @@ def plot_empty_vs_length(df: pd.DataFrame, out: Path) -> None:
     fig, ax = plt.subplots(figsize=(7, 4.5))
     for status in STATUS_ORDER:
         sub = df[df["status"] == status]
-        ax.scatter(sub["n_frames"], sub["empty_rate"] * 100,
+        rate_col = "in_span_rate" if df["in_span_rate"].notna().any() else "empty_rate_overall"
+        ax.scatter(sub["n_frames"], sub[rate_col].fillna(0) * 100,
                    c=STATUS_COLORS[status], label=status, alpha=0.7, s=40)
     ax.axhline(10, ls="--", color="#ff7f0e", alpha=0.3)
     ax.axhline(30, ls="--", color="#d62728", alpha=0.3)
