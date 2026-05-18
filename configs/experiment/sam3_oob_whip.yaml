@@ -1,11 +1,20 @@
 # @package _global_
-# Ablation level 4: SAM 3 out-of-box (when released). Placeholder.
+# Ablation level 4: SAM 3 out-of-the-box. Uses the public Meta release
+# (facebook/sam3.1 on HuggingFace, gated — request access first).
+#
+# Prereqs (one-time on bp):
+#   bash slurm/setup_sam3_bp.sh        # clone + install into .sam3_venv
+#   ssh bp 'source .sam3_venv/bin/activate && hf auth login'
+#   ssh bp '... && huggingface-cli download facebook/sam3.1 --local-dir checkpoints/sam3.1'
+#
 # Run: python -m pipeline run +experiment=sam3_oob_whip
 
 name: sam3_oob_whip_v1
-description: SAM 3 out-of-box, manual_box prompts, whip cohort
+description: SAM 3 (Meta public release), manual_box prompts, whip cohort, OOB
 
 stage2_inference:
   model: sam3
-  checkpoint: ${oc.env:BP_REPO,.}/checkpoints/sam3.pth
-  config: configs/sam3/sam3_base.yaml
+  # Concrete filename comes from the HF snapshot; update after first download.
+  checkpoint: ${oc.env:BP_REPO,.}/checkpoints/sam3.1/sam3.1_video.pth
+  # SAM 3 build is config-less (architecture is fixed); kept for schema compat.
+  config: null

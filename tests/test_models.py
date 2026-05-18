@@ -64,20 +64,16 @@ def test_build_tracker_unknown_model_raises():
 
 
 # ----------------------------------------------------------------------------
-# Placeholder models raise on .run()
+# SAM 3 is import-deferred — module loads without the sam3 package installed
 # ----------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("model_key", ["sam3", "sam3_whip_ft"])
-def test_sam3_placeholders_raise_on_run(model_key, tmp_path):
+def test_sam3_constructs_without_sam3_installed(model_key):
+    """SAM 3 tracker class must be constructible even on machines where the
+    sam3 package isn't installed; the heavy import happens inside .run()."""
     tracker = build_tracker(_stub_cfg(model_key))
-    with pytest.raises(NotImplementedError, match="SAM3"):
-        tracker.run(
-            video_id="x",
-            frames_dir=tmp_path,
-            prompts_json=tmp_path / "p.json",
-            results_dir=tmp_path / "results",
-        )
+    assert tracker.REGISTRY_KEY == model_key
 
 
 # ----------------------------------------------------------------------------
@@ -95,3 +91,9 @@ def test_sam2_family_uses_same_run_method():
     )
     assert SurgSAM2VideoTracker.run is SAM2VideoTracker.run
     assert SurgSAM2WhipFTVideoTracker.run is SAM2VideoTracker.run
+
+
+def test_sam3_family_uses_same_run_method():
+    """SAM 3 OOB + whip-FT share the same code path; only checkpoint differs."""
+    from pipeline.models.sam3 import SAM3VideoTracker, SAM3WhipFTVideoTracker
+    assert SAM3WhipFTVideoTracker.run is SAM3VideoTracker.run

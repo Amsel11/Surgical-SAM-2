@@ -90,7 +90,7 @@ class Stage2Inference(BaseModel):
 
     model: ModelKey
     checkpoint: str
-    config: str
+    config: str | None = None  # SAM 2 needs an architecture yaml; SAM 3 doesn't.
     device: str = "cuda:0"
     bidirectional: bool = True   # reverse pass first, then forward
     outputs: Stage2Outputs = Field(default_factory=Stage2Outputs)
