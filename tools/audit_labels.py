@@ -16,9 +16,10 @@ Usage:
     python -m tools.audit_labels --out local_results/label_audit.csv
     python -m tools.audit_labels --cohort endovis18
 
-On bp:
-    .venv/bin/python -m tools.audit_labels \\
-        --out local_results/label_audit.csv
+On bp (run from the repo root after activating the sam3 venv):
+    ssh bp 'cd /gpfs/data/oermannlab/users/schula12/Surgical-SAM-2 \\
+            && source .sam3_venv/bin/activate \\
+            && python -m tools.audit_labels --cohort whip'
 """
 from __future__ import annotations
 
