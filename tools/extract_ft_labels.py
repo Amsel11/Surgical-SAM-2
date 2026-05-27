@@ -20,6 +20,19 @@ Filters:
   - obj_id labelled 'unknown_instrument'  : skip entirely (can't train a class
                                             we don't know)
 
+Sampling (consecutive frames are ~99% identical pixel-wise, so every-frame
+extraction is wasteful for FT — these knobs are how you dial corpus size):
+
+  --stride N            : keep every N-th mask file (frame_idx % stride == 0).
+                          stride=1 = every frame (default; full corpus).
+                          stride=10 with 1fps extracts ≈ one sample per 10s.
+  --max-per-video M     : cap per-video record count by EVENLY subsampling
+                          the survivors. Preserves appearance diversity across
+                          the trusted span (vs keeping the first M). None =
+                          no cap (default).
+
+Both apply: --stride trims at walk time; --max-per-video caps post-filter.
+
 Output JSONL row:
     {"video_id": str, "frame_idx": int, "obj_id": int, "instrument_id": str,
      "box_xyxy": [x0,y0,x1,y1], "area_px": int, "source": <run>}
@@ -123,8 +136,15 @@ def extract_one(
     min_area_px: int,
     max_area_jump_ratio: float,
     source: str,
+    stride: int = 1,
+    max_per_video: int | None = None,
 ) -> tuple[list[dict], dict]:
-    """Walk masks/*.png for one video. Return (records, stats)."""
+    """Walk masks/*.png for one video. Return (records, stats).
+
+    `stride`: keep mask files where frame_idx % stride == 0.
+    `max_per_video`: after all filters, evenly subsample to at most this many
+    records per video — preserves appearance diversity across the trusted span.
+    """
     if not obj_labels:
         return [], {"video_id": video_id, "n_frames": 0, "n_records": 0,
                     "skipped_no_labels": True}
@@ -138,9 +158,13 @@ def extract_one(
     n_dropped_area = 0
     n_dropped_jump = 0
     n_dropped_span = 0
+    n_dropped_stride = 0
 
     for mp in mask_files:
         frame_idx = parse_frame_idx(mp.name)
+        if stride > 1 and frame_idx % stride != 0:
+            n_dropped_stride += 1
+            continue
         if trusted_span and not (trusted_span[0] <= frame_idx <= trusted_span[1]):
             n_dropped_span += 1
             continue
@@ -176,13 +200,23 @@ def extract_one(
                 "source": source,
             })
 
+    n_before_cap = len(records)
+    if max_per_video is not None and len(records) > max_per_video:
+        # Evenly-spaced indices: 0, ceil(n/M), 2*ceil(n/M), ... → preserves
+        # spread across the trusted span better than head-N or random sample.
+        step = len(records) / max_per_video
+        keep_idx = {int(i * step) for i in range(max_per_video)}
+        records = [r for i, r in enumerate(records) if i in keep_idx]
+
     return records, {
         "video_id": video_id,
         "n_frames": len(mask_files),
         "n_records": len(records),
+        "n_before_cap": n_before_cap,
         "n_dropped_area": n_dropped_area,
         "n_dropped_jump": n_dropped_jump,
         "n_dropped_outside_span": n_dropped_span,
+        "n_dropped_stride": n_dropped_stride,
         "trusted_span": list(trusted_span) if trusted_span else None,
         "n_objs_labelled": len(obj_labels),
     }
@@ -208,6 +242,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--max-area-jump-ratio", type=float, default=DEFAULT_MAX_AREA_JUMP_RATIO,
                    help="Drop frames where mask area changes by >ratio between "
                         f"consecutive frames (default {DEFAULT_MAX_AREA_JUMP_RATIO}).")
+    p.add_argument("--stride", type=int, default=1,
+                   help="Keep every N-th mask file (default 1 = all frames). "
+                        "stride=10 ≈ 1 sample/10s when frames are 1fps extracts.")
+    p.add_argument("--max-per-video", type=int, default=None,
+                   help="Cap records per video by evenly subsampling survivors "
+                        "(default: no cap). Combine with --stride for tight corpora.")
     p.add_argument("--db", help="Manifest path override.")
     p.add_argument("--dry-run", action="store_true",
                    help="Walk masks + print stats but don't write the JSONL.")
@@ -246,6 +286,8 @@ def main(argv: list[str] | None = None) -> int:
             min_area_px=args.min_area_px,
             max_area_jump_ratio=args.max_area_jump_ratio,
             source=args.run,
+            stride=args.stride,
+            max_per_video=args.max_per_video,
         )
         all_records.extend(records)
         summaries.append(stats)
