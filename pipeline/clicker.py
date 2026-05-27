@@ -50,6 +50,11 @@ CORNER_MARKER_COLOR = (255, 255, 50)
 SEED: int = 1
 PROMPT_METHOD: str = "manual_box"
 DRY_RUN: bool = False    # if True, Save buttons are no-ops with a UI notice
+# Edit mode: "next pending" finds saved sets that still have unknown_instrument
+# rows (Phase 0b relabel pass) instead of unsaved videos. Existing boxes load
+# onto the anchor frames so the dropdown can assign labels in-place and missed
+# arms can be boxed without redoing the geometry.
+EDIT_MODE: bool = False
 
 # Per-object box colors; cycled by obj_id.
 OBJ_COLORS = [
@@ -143,22 +148,47 @@ def load_instrument_choices() -> list[tuple[str, str]]:
 
 
 def fetch_next_pending_video(conn) -> dict | None:
-    """Next video without a (seed=SEED, prompt_method=PROMPT_METHOD) prompt_set."""
-    row = conn.execute(
-        """
-        SELECT v.video_id, v.frames_dir, v.n_frames
-        FROM videos v
-        WHERE NOT EXISTS (
-            SELECT 1 FROM prompt_sets ps
-            WHERE ps.video_id = v.video_id
-              AND ps.seed = ?
-              AND ps.prompt_method = ?
-        )
-        ORDER BY v.video_id
-        LIMIT 1
-        """,
-        (SEED, PROMPT_METHOD),
-    ).fetchone()
+    """Next video to work on, mode-dependent.
+
+    Normal mode: video has no (seed=SEED, prompt_method=PROMPT_METHOD) prompt_set.
+    Edit mode: video has a 'ready' prompt_set for (SEED, PROMPT_METHOD) with at
+    least one prompt_objects.instrument_id = 'unknown_instrument'."""
+    if EDIT_MODE:
+        row = conn.execute(
+            """
+            SELECT v.video_id, v.frames_dir, v.n_frames
+            FROM videos v
+            JOIN prompt_sets ps
+              ON ps.video_id = v.video_id
+             AND ps.seed = ?
+             AND ps.prompt_method = ?
+             AND ps.status = 'ready'
+            WHERE EXISTS (
+                SELECT 1 FROM prompt_objects po
+                WHERE po.prompt_set_id = ps.prompt_set_id
+                  AND po.instrument_id = 'unknown_instrument'
+            )
+            ORDER BY v.video_id
+            LIMIT 1
+            """,
+            (SEED, PROMPT_METHOD),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            """
+            SELECT v.video_id, v.frames_dir, v.n_frames
+            FROM videos v
+            WHERE NOT EXISTS (
+                SELECT 1 FROM prompt_sets ps
+                WHERE ps.video_id = v.video_id
+                  AND ps.seed = ?
+                  AND ps.prompt_method = ?
+            )
+            ORDER BY v.video_id
+            LIMIT 1
+            """,
+            (SEED, PROMPT_METHOD),
+        ).fetchone()
     return dict(row) if row else None
 
 
@@ -171,38 +201,99 @@ def fetch_video_by_id(conn, video_id: str) -> dict | None:
 
 
 def fetch_video_table_rows() -> list[list]:
-    """Build the sidebar rows: every video with its (seed=1, manual_box) prompt_set status.
-       Sorted: pending first (so user lands on them), then done.
+    """Build the sidebar rows: every video with its (seed=SEED, method=PROMPT_METHOD) prompt_set status.
+
+    Normal mode order: pending → failed → ready (so unclicked videos surface first).
+    Edit mode order: ready-with-unknowns → ready-fully-labelled → pending → failed
+    (so the relabel pass surfaces first).
+
+    The marker shows '?' for ready-but-still-has-unknown_instrument rows so the
+    table communicates relabel progress regardless of mode.
     """
     conn = connect()
     rows = conn.execute(
         """
         SELECT v.video_id,
                v.n_frames,
-               COALESCE(ps.n_objects, 0)             AS n_objects,
-               COALESCE(ps.status, 'pending')        AS status
+               COALESCE(ps.n_objects, 0)            AS n_objects,
+               COALESCE(ps.status, 'pending')       AS status,
+               COALESCE((
+                   SELECT SUM(CASE WHEN po.instrument_id='unknown_instrument' THEN 1 ELSE 0 END)
+                   FROM prompt_objects po
+                   WHERE po.prompt_set_id = ps.prompt_set_id
+               ), 0)                                AS n_unknown
         FROM videos v
         LEFT JOIN prompt_sets ps
           ON ps.video_id = v.video_id
          AND ps.seed = ?
          AND ps.prompt_method = ?
-        ORDER BY CASE COALESCE(ps.status, 'pending')
-                    WHEN 'pending' THEN 0
-                    WHEN 'failed'  THEN 1
-                    WHEN 'ready'   THEN 2
-                    ELSE 3 END,
-                 v.video_id
         """,
         (SEED, PROMPT_METHOD),
     ).fetchall()
+
+    def sort_key(r):
+        status = r["status"]
+        n_unknown = r["n_unknown"] or 0
+        if EDIT_MODE:
+            if status == "ready" and n_unknown > 0:
+                bucket = 0
+            elif status == "ready":
+                bucket = 1
+            elif status == "pending":
+                bucket = 2
+            elif status == "failed":
+                bucket = 3
+            else:
+                bucket = 4
+        else:
+            if status == "pending":
+                bucket = 0
+            elif status == "failed":
+                bucket = 1
+            elif status == "ready":
+                bucket = 2
+            else:
+                bucket = 3
+        return (bucket, r["video_id"])
+
+    rows = sorted(rows, key=sort_key)
+
     out = []
     for r in rows:
-        mark = "✓" if r["status"] == "ready" else ("✗" if r["status"] == "failed" else " ")
+        status = r["status"]
+        n_unknown = r["n_unknown"] or 0
+        if status == "ready" and n_unknown > 0:
+            mark = "?"
+        elif status == "ready":
+            mark = "✓"
+        elif status == "failed":
+            mark = "✗"
+        else:
+            mark = " "
         out.append([mark, r["video_id"], int(r["n_objects"]), int(r["n_frames"])])
     return out
 
 
 def count_remaining(conn) -> int:
+    """In normal mode: videos with no prompt_set yet.
+    In edit mode: videos with a ready prompt_set that still has unknowns."""
+    if EDIT_MODE:
+        return conn.execute(
+            """
+            SELECT COUNT(DISTINCT v.video_id) FROM videos v
+            JOIN prompt_sets ps
+              ON ps.video_id = v.video_id
+             AND ps.seed = ?
+             AND ps.prompt_method = ?
+             AND ps.status = 'ready'
+            WHERE EXISTS (
+                SELECT 1 FROM prompt_objects po
+                WHERE po.prompt_set_id = ps.prompt_set_id
+                  AND po.instrument_id = 'unknown_instrument'
+            )
+            """,
+            (SEED, PROMPT_METHOD),
+        ).fetchone()[0]
     return conn.execute(
         """
         SELECT COUNT(*) FROM videos v
@@ -916,15 +1007,16 @@ def build_ui() -> gr.Blocks:
 
     # Banner spelling out where this session will write. Visible at the top so
     # the user can confirm before clicking. DRY_RUN paints it red.
+    mode_tag = " — **EDIT MODE** (Phase 0b relabel)" if EDIT_MODE else ""
     if DRY_RUN:
         target_banner = (
-            f"### ⚠️ DRY RUN — nothing is being saved\n"
+            f"### ⚠️ DRY RUN — nothing is being saved{mode_tag}\n"
             f"Target (would be): **seed={SEED}, method={PROMPT_METHOD}** "
             f"under `{PROMPTS_DIR}/`. Save buttons are no-ops."
         )
     else:
         target_banner = (
-            f"### Writing to: **seed={SEED}, method=`{PROMPT_METHOD}`** "
+            f"### Writing to: **seed={SEED}, method=`{PROMPT_METHOD}`**{mode_tag} "
             f"under `{PROMPTS_DIR}/`"
         )
 
@@ -1033,7 +1125,7 @@ def main(argv: list[str] | None = None) -> int:
     from dotenv import load_dotenv
     load_dotenv(REPO_ROOT / ".env")
 
-    global SEED, PROMPT_METHOD, PROMPTS_DIR, DRY_RUN
+    global SEED, PROMPT_METHOD, PROMPTS_DIR, DRY_RUN, EDIT_MODE
     p = argparse.ArgumentParser(description="Gradio click collector")
     p.add_argument("--port", type=int, default=9876)
     p.add_argument("--host", default="0.0.0.0",
@@ -1047,15 +1139,21 @@ def main(argv: list[str] | None = None) -> int:
                    help=f"Directory for prompts JSON output (default {PROMPTS_DIR}).")
     p.add_argument("--dry-run", action="store_true",
                    help="UI works but Save buttons are no-ops. Nothing is written.")
+    p.add_argument("--edit", action="store_true",
+                   help="Phase 0b relabel pass. Navigates to existing prompt_sets "
+                        "with unknown_instrument rows so the dropdown can assign "
+                        "labels in-place. Click a '?' row in the table to load it.")
     args = p.parse_args(argv)
 
     SEED = args.seed
     PROMPT_METHOD = args.method
     PROMPTS_DIR = args.prompts_dir
     DRY_RUN = args.dry_run
+    EDIT_MODE = args.edit
 
     print(f"Clicker write target: seed={SEED} method={PROMPT_METHOD} dir={PROMPTS_DIR}"
-          + ("  [DRY RUN]" if DRY_RUN else ""))
+          + ("  [DRY RUN]" if DRY_RUN else "")
+          + ("  [EDIT MODE]" if EDIT_MODE else ""))
 
     demo = build_ui()
     demo.queue().launch(
