@@ -24,6 +24,17 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 IMG_EXTS = {".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG"}
 FRAME_RE = re.compile(r"^frame_(\d+)$")
 
+# Shared anchor-frame sampling + default prompts dir. Lives here rather than in
+# pipeline.clicker so the dino prompter (which runs in a non-gradio env) can
+# reuse them without pulling gradio in via the clicker module import.
+N_PROMPT_FRAMES = 3
+PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
+
+
+def sample_frame_positions(n_total: int, n_samples: int = N_PROMPT_FRAMES) -> list[int]:
+    """Uniform stratified sampling: 25/50/75% by default for n_samples=3."""
+    return [int(round((i + 1) * n_total / (n_samples + 1))) for i in range(n_samples)]
+
 # DAVIS palette so palette-PNG masks render with consistent colors.
 DAVIS_PALETTE = (
     b"\x00\x00\x00\x80\x00\x00\x00\x80\x00\x80\x80\x00\x00\x00\x80\x80\x00\x80"

@@ -112,12 +112,26 @@ def resolve_video_scope(conn, scope) -> list[str]:
 
 
 def resolve_prompts_path(conn, video_id: str, seed: int, stage1) -> Path:
-    """Look up the prompts JSON for (video, seed, method) in the manifest."""
-    if stage1.method != "manual_box":
-        raise NotImplementedError(
-            f"Stage1 method {stage1.method!r} not yet wired. Phase D will add "
-            "yolo/dino/gt_box prompt strategies."
-        )
+    """Look up (or generate, for on-demand methods) the prompts JSON.
+
+    manual_box / manual_click: read pre-existing prompt_sets row. Fails loud
+    if absent — the user is expected to have clicked first.
+
+    dino: read pre-existing row if one is 'ready'; otherwise instantiate the
+    GroundingDinoPrompter and run it on the fly. Inserts a prompt_sets row as
+    a side effect.
+    """
+    if stage1.method == "manual_box":
+        return _resolve_manual_box(conn, video_id, seed)
+    if stage1.method == "dino":
+        return _resolve_dino(conn, video_id, seed, stage1)
+    raise NotImplementedError(
+        f"Stage1 method {stage1.method!r} not yet wired. yolo/gt_box "
+        "prompt strategies remain future work."
+    )
+
+
+def _resolve_manual_box(conn, video_id: str, seed: int) -> Path:
     row = conn.execute("""
         SELECT prompts_path, status FROM prompt_sets
         WHERE video_id = ? AND seed = ? AND prompt_method = ?
@@ -131,6 +145,33 @@ def resolve_prompts_path(conn, video_id: str, seed: int, stage1) -> Path:
     if not row["prompts_path"]:
         raise RuntimeError(f"prompts_path is empty for {video_id} in the manifest.")
     return Path(row["prompts_path"])
+
+
+def _resolve_dino(conn, video_id: str, seed: int, stage1) -> Path:
+    """Return an existing dino prompt_set's JSON, or generate one on demand."""
+    row = conn.execute("""
+        SELECT prompts_path, status FROM prompt_sets
+        WHERE video_id = ? AND seed = ? AND prompt_method = ?
+    """, (video_id, seed, "dino")).fetchone()
+    if row is not None and row["status"] == "ready" and row["prompts_path"]:
+        existing_path = Path(row["prompts_path"])
+        if existing_path.exists():
+            return existing_path
+        # JSON went missing on disk; fall through and regenerate.
+
+    from pipeline.prompts import build_prompter
+
+    frames_row = conn.execute(
+        "SELECT frames_dir FROM videos WHERE video_id = ?", (video_id,)
+    ).fetchone()
+    if frames_row is None:
+        raise RuntimeError(f"Video {video_id} not in manifest.")
+    prompter = build_prompter(stage1)
+    return prompter.run(
+        video_id=video_id,
+        frames_dir=Path(frames_row["frames_dir"]),
+        seed=seed,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -220,7 +261,9 @@ def main(cfg: DictConfig) -> None:
         try:
             run_one_video(video_id=vid, config=config, cfg_dict=cfg_dict, conn=conn)
         except Exception as exc:
+            import traceback
             print(f"FAILED {vid}: {exc}", file=sys.stderr)
+            traceback.print_exc(file=sys.stderr)
             failed.append((vid, str(exc)))
             if video_index is not None:
                 # In slurm-array mode, surface the failure as a non-zero exit

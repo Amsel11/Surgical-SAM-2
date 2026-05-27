@@ -54,7 +54,8 @@ class Stage1Prompting(BaseModel):
     `source` is method-specific:
       - manual_box / manual_click : 'clicker_db' (read from prompt_sets table)
       - yolo                      : path to YOLO weights, e.g. './weights/yolov8.pt'
-      - dino                      : path to DINO weights
+      - dino                      : 'hf' for the HF zero-shot baseline, or a
+                                    local checkpoint path (also see `checkpoint`)
       - gt_box                    : 'gt' (derive bbox from GT mask)
     """
     model_config = ConfigDict(extra="forbid")
@@ -66,6 +67,12 @@ class Stage1Prompting(BaseModel):
     resample_empty: bool = True
     # Which instrument classes to label/track. ['all'] = every clicked obj.
     instrument_filter: list[str] = Field(default_factory=lambda: ["all"])
+    # Grounding DINO knobs (used only when method='dino'). `checkpoint`, when
+    # set, overrides the default HF model id — same hook the FT'd weights
+    # drop into.
+    checkpoint: str | None = None
+    box_threshold: float = 0.35
+    text_threshold: float = 0.25
 
 
 # ---------------------------------------------------------------------------

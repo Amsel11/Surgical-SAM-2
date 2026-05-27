@@ -16,7 +16,10 @@ model_weights/*
 /sav_dataset/example/
 results/
 test_data/
-prompts/
+# Repo-root prompts/ holds clicker output JSON (not committed). The
+# pipeline/prompts/ Python package IS committed — leading slash anchors
+# the pattern to the repo root so it doesn't catch the package dir.
+/prompts/
 archive/
 .claude/
 

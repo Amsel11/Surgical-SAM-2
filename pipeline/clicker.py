@@ -35,11 +35,14 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFile
 
 from .db import REPO_ROOT, connect, transaction
+from .io import N_PROMPT_FRAMES, sample_frame_positions
+from .io import PROMPTS_DIR as _DEFAULT_PROMPTS_DIR
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
-PROMPTS_DIR = REPO_ROOT / "prompts"
-N_PROMPT_FRAMES = 3
+# Module-mutable; the --prompts-dir CLI flag rebinds this without affecting
+# pipeline.io.PROMPTS_DIR (which the dino prompter reads).
+PROMPTS_DIR: Path = _DEFAULT_PROMPTS_DIR
 CUTOUT_LONG_SIDE = 220
 BOX_LINE_WIDTH = 3
 CORNER_MARKER_RADIUS = 8
@@ -110,11 +113,6 @@ def parse_source_idx(frame_path: str | Path) -> int | None:
     import re
     m = re.search(r"src(\d+)", Path(frame_path).name)
     return int(m.group(1)) if m else None
-
-
-def sample_frame_positions(n_total: int, n_samples: int = N_PROMPT_FRAMES) -> list[int]:
-    """Uniform stratified sampling: 25/50/75% by default for n_samples=3."""
-    return [int(round((i + 1) * n_total / (n_samples + 1))) for i in range(n_samples)]
 
 
 def extract_box_cutout(image: np.ndarray, box: list[float], long_side: int = CUTOUT_LONG_SIDE) -> np.ndarray | None:
