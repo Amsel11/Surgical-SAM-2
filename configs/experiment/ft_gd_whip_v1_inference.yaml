@@ -1,0 +1,37 @@
+# @package _global_
+# Ablation: fine-tuned Grounding DINO Stage-1 + SAM 3 Stage-2.
+# The headline FT condition. Only difference from zs_gd_whip_v1_inference
+# is `stage1_prompting.checkpoint` — same prompter, same SAM3, same scope,
+# so the ablation diff comes down to a single config line.
+#
+# Prereqs:
+#   - FT'd weights produced by slurm/ft_gd_train.sh (Phase 4) and saved at
+#     checkpoints/gdino_whip_ft_v1.pth
+#   - All Phase 0/1 prereqs from zs_gd_whip_v1_inference (vocab + .gdino_venv).
+#   - Re-run tools.run_dino_prompter with --checkpoint to populate prompt_sets
+#     under method='dino' for THIS checkpoint (the orchestrator can't tell
+#     ZS from FT from the prompt_method alone — the manifest UPSERT means
+#     whichever was run last is what gets read).
+#
+# Run (in .sam3_venv, after FT prompt_sets are in the manifest):
+#   python -m pipeline run +experiment=ft_gd_whip_v1_inference
+#
+# To avoid the UPSERT collision with ZS results during the ablation, run
+# ZS at seed=1 and FT at seed=2 (or use distinct prompt_method tags by
+# extending PromptMethod — TODO for the ablation harness).
+
+name: dino_ft_whip_v1
+description: FT Grounding DINO Stage-1 (Open-GroundingDino), SAM 3 OOB Stage-2, whip cohort
+
+stage1_prompting:
+  method: dino
+  # FT'd weights from Open-GroundingDino. Local path (transformers loads it
+  # the same way it loads an HF model id).
+  checkpoint: ${oc.env:BP_REPO,.}/checkpoints/gdino_whip_ft_v1.pth
+  box_threshold: 0.35
+  text_threshold: 0.25
+
+stage2_inference:
+  model: sam3
+  checkpoint: ${oc.env:BP_REPO,.}/checkpoints/sam3/sam3.pt
+  config: null

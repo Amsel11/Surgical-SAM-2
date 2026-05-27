@@ -1,0 +1,32 @@
+# @package _global_
+# Ablation: zero-shot Grounding DINO Stage-1 + SAM 3 Stage-2.
+# The "baseline" condition for the FT-GD ablation — measures what
+# grounding-dino-tiny does on the whip cohort without any fine-tuning.
+#
+# Prereqs (one-time, on bp):
+#   sbatch slurm/setup_gdino_bp.sh                       # builds .gdino_venv
+#   ssh bp '... && source .gdino_venv/bin/activate \
+#       && python -m tools.build_vocab \                 # configs/cardiac_whip_vocab.json
+#       && python -m tools.run_dino_prompter --all-cohort whip --seed 1'
+#
+# Run (in .sam3_venv, after the dino prompt_sets exist in the manifest):
+#   python -m pipeline run +experiment=zs_gd_whip_v1_inference
+#   python -m pipeline run +experiment=zs_gd_whip_v1_inference "scope.videos=[DC_whip_11609423]"
+#
+# Scope defaults to 'all' from the base config; override with scope.videos=[...]
+# to run on the test split once configs/splits/whip_ft_v1.yaml exists.
+
+name: dino_zs_whip_v1
+description: Zero-shot Grounding DINO Stage-1, SAM 3 OOB Stage-2, whip cohort
+
+stage1_prompting:
+  method: dino
+  # source/checkpoint stay at defaults → HF IDEA-Research/grounding-dino-tiny.
+  # Vocab queries are pulled from configs/cardiac_whip_vocab.json (Phase 0c).
+  box_threshold: 0.35
+  text_threshold: 0.25
+
+stage2_inference:
+  model: sam3
+  checkpoint: ${oc.env:BP_REPO,.}/checkpoints/sam3/sam3.pt
+  config: null
