@@ -52,6 +52,16 @@
         "force bipolar"
       ],
       "description": "Alternative bipolar for fine work"
+    },
+    {
+      "canonical": "large suturecut needle driver",
+      "ui_variants": [
+        "large suturecut needle driver",
+        "suturecut needle driver",
+        "needle driver",
+        "suturecut"
+      ],
+      "description": "Needle driver for suturing — observed on arm4 in whip (was missing; Qwen mislabeled it 'vessel sealer extend')"
     }
   ],
   "mode_indicators_to_ignore": [
@@ -66,6 +76,7 @@
     "vessel sealer extend",
     "tip-up fenestrated grasper",
     "monopolar curved scissors",
-    "force bipolar"
+    "force bipolar",
+    "large suturecut needle driver"
   ]
 }

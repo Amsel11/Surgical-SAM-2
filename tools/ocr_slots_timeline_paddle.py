@@ -566,7 +566,11 @@ def main():
     ap.add_argument("--video-fps", type=float, default=1.0,
                     help="Sampling fps when decoding a video (default 1/s).")
     ap.add_argument("--upscale", type=float, default=3.0)
-    ap.add_argument("--fuzz-threshold", type=int, default=70)
+    # 60, not 70: on the MT_whip_0925905 Qwen-vs-Paddle compare, 218 correct
+    # arm2 (fenestrated bipolar forceps) reads scored 60-70 and were dropped at
+    # 70, tanking recall to ~50%. 60 recovers them with zero observed false
+    # mappings on that clip (Paddle never mis-mapped to a wrong instrument).
+    ap.add_argument("--fuzz-threshold", type=int, default=60)
     ap.add_argument("--paddle-conf-floor", type=float, default=0.5)
     ap.add_argument("--use-gpu", action="store_true")
     args = ap.parse_args()
