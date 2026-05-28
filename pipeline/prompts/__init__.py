@@ -14,10 +14,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from pipeline.prompts.auto import AutoPrompter
 from pipeline.prompts.dino import GroundingDinoPrompter
 
 PROMPTER_REGISTRY: dict[str, type] = {
     "dino": GroundingDinoPrompter,
+    "auto": AutoPrompter,
 }
 
 # Cache prompter instances so the underlying detector (transformers + torch
@@ -27,12 +29,46 @@ _PROMPTER_CACHE: dict[tuple, Any] = {}
 
 
 def build_prompter(stage1_cfg) -> Any:
-    """Instantiate (or fetch from cache) a prompter from Stage1Prompting config."""
+    """Instantiate (or fetch from cache) a prompter from Stage1Prompting config.
+
+    Cache keys are the *detector-identifying* fields so the heavy GD backbone
+    loads once per process even when the orchestrator calls this per video.
+    """
     key = stage1_cfg.method
     if key not in PROMPTER_REGISTRY:
         raise KeyError(
             f"Unknown stage1 method {key!r}. Registered prompters: {sorted(PROMPTER_REGISTRY)}"
         )
+
+    if key == "auto":
+        a = stage1_cfg.auto
+        cache_key = (
+            "auto",
+            stage1_cfg.checkpoint,
+            stage1_cfg.model_id,
+            stage1_cfg.box_threshold,
+            stage1_cfg.text_threshold,
+            a.query,
+        )
+        if cache_key not in _PROMPTER_CACHE:
+            _PROMPTER_CACHE[cache_key] = AutoPrompter(
+                model_id=stage1_cfg.model_id,
+                checkpoint=stage1_cfg.checkpoint,
+                query=a.query,
+                box_threshold=stage1_cfg.box_threshold,
+                text_threshold=stage1_cfg.text_threshold,
+                score_floor=a.score_floor,
+                min_area_frac=a.min_area_frac,
+                max_area_frac=a.max_area_frac,
+                exclude_bottom_frac=a.exclude_bottom_frac,
+                box_shrink_frac=a.box_shrink_frac,
+                nms_iou=a.nms_iou,
+                match_iou=a.match_iou,
+                max_tracks=a.max_tracks,
+                anchor_offset=a.anchor_offset,
+            )
+        return _PROMPTER_CACHE[cache_key]
+
     cache_key = (
         key,
         getattr(stage1_cfg, "checkpoint", None),
@@ -51,4 +87,4 @@ def build_prompter(stage1_cfg) -> Any:
     return _PROMPTER_CACHE[cache_key]
 
 
-__all__ = ["PROMPTER_REGISTRY", "build_prompter", "GroundingDinoPrompter"]
+__all__ = ["PROMPTER_REGISTRY", "build_prompter", "GroundingDinoPrompter", "AutoPrompter"]

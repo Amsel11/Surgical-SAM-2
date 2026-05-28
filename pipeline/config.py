@@ -45,7 +45,29 @@ class Scope(BaseModel):
 # ---------------------------------------------------------------------------
 
 # Concrete prompt strategies. Each will get a registry entry in pipeline/prompts/.
-PromptMethod = Literal["manual_box", "manual_click", "yolo", "dino", "gt_box"]
+PromptMethod = Literal["manual_box", "manual_click", "yolo", "dino", "gt_box", "auto"]
+
+
+class AutoPromptConfig(BaseModel):
+    """Knobs for the fully-automated, class-agnostic prompter (method='auto').
+
+    Only consulted when `Stage1Prompting.method == 'auto'`. The defaults are the
+    validated v0 whip hyperparameters. `model_id`/`checkpoint`/`box_threshold`/
+    `text_threshold` on the parent Stage1Prompting drive the detector; the knobs
+    here drive anchor box selection + cross-anchor track matching.
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    query: str = "surgical instrument"  # single generic GD query
+    score_floor: float = 0.15
+    min_area_frac: float = 0.02
+    max_area_frac: float = 0.50
+    exclude_bottom_frac: float = 0.05   # drop boxes ENTIRELY in bottom strip (OCR)
+    box_shrink_frac: float = 0.10       # tighten each anchor box before SAM2
+    nms_iou: float = 0.30
+    match_iou: float = 0.20             # new box vs existing track's last box
+    max_tracks: int = 6                 # global cap on distinct obj_ids
+    anchor_offset: int = 0              # frames past each segment start to anchor
 
 
 class Stage1Prompting(BaseModel):
@@ -73,6 +95,10 @@ class Stage1Prompting(BaseModel):
     checkpoint: str | None = None
     box_threshold: float = 0.35
     text_threshold: float = 0.25
+    # Used only when method='auto'.
+    model_id: str = "IDEA-Research/grounding-dino-base"
+    segments_root: str | None = None    # OCR segments root: <root>/<video_id>/segments.csv
+    auto: AutoPromptConfig = Field(default_factory=AutoPromptConfig)
 
 
 # ---------------------------------------------------------------------------
@@ -101,6 +127,27 @@ class Stage2Inference(BaseModel):
     device: str = "cuda:0"
     bidirectional: bool = True   # reverse pass first, then forward
     outputs: Stage2Outputs = Field(default_factory=Stage2Outputs)
+
+
+# ---------------------------------------------------------------------------
+# Stage 2 post-processing (optional, runs on the tracker's output masks)
+# ---------------------------------------------------------------------------
+
+
+class DedupConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    iou_thr: float = 0.30               # mean bbox-IoU above which tracks merge
+    min_lifespan_overlap: float = 0.60  # below this -> temporally distinct, keep
+    min_mean_area_frac: float = 0.005   # mean-when-present below this -> ghost
+    min_frames: int = 100               # pairs co-present in fewer frames skipped
+
+
+class PostProcess(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    dedup: DedupConfig = Field(default_factory=DedupConfig)
 
 
 # ---------------------------------------------------------------------------
@@ -163,6 +210,7 @@ class PipelineConfig(BaseModel):
     scope: Scope
     stage1_prompting: Stage1Prompting
     stage2_inference: Stage2Inference
+    postprocess: PostProcess = Field(default_factory=PostProcess)
     stage3_eval: Stage3Eval = Field(default_factory=Stage3Eval)
     infrastructure: Infrastructure
 

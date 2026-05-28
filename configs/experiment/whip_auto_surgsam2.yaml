@@ -1,0 +1,46 @@
+# @package _global_
+# Canonical fully-automated zero-shot pipeline for the whip cohort.
+#
+#   stage 1 (auto)  : OCR segments -> per-segment anchor -> generic-query GD
+#                     -> NMS/strip/area/shrink filters -> persistent IoU-match
+#   stage 2         : SurgSAM-2 bidirectional propagation
+#   postprocess     : drop ghost tracks, merge duplicates, renumber survivors
+#
+# Ablate the segmenter with a one-line override, e.g.:
+#   python -m pipeline run +experiment=whip_auto_surgsam2 stage2_inference.model=sam3
+#
+# Precondition: OCR segments.csv exists at <segments_root>/<video_id>/segments.csv
+# (produced by tools/ocr_slots_timeline.py).
+#
+# Run one video:  python -m pipeline run +experiment=whip_auto_surgsam2 'scope.videos=[DC_whip_11609423]'
+
+name: whip_auto_surgsam2_v1
+description: Fully-automated OCR-anchored class-agnostic GD + SurgSAM-2 + dedup, whip cohort
+
+stage1_prompting:
+  method: auto
+  segments_root: ${oc.env:BP_REPO,.}/results/ocr_slots_timeline
+  model_id: IDEA-Research/grounding-dino-base   # generic query needs no vocab
+  box_threshold: 0.15
+  text_threshold: 0.10
+  auto:
+    query: "surgical instrument"
+    score_floor: 0.15
+    min_area_frac: 0.02
+    max_area_frac: 0.50
+    exclude_bottom_frac: 0.05
+    box_shrink_frac: 0.10
+    nms_iou: 0.30
+    match_iou: 0.20
+    max_tracks: 6
+    anchor_offset: 0
+
+# stage2_inference uses the defaults (surgsam2 + endo18 checkpoint + hiera_s).
+
+postprocess:
+  dedup:
+    enabled: true
+    iou_thr: 0.30
+    min_lifespan_overlap: 0.60
+    min_mean_area_frac: 0.005
+    min_frames: 100

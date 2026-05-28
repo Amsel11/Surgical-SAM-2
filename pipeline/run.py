@@ -125,9 +125,42 @@ def resolve_prompts_path(conn, video_id: str, seed: int, stage1) -> Path:
         return _resolve_manual_box(conn, video_id, seed)
     if stage1.method == "dino":
         return _resolve_dino(conn, video_id, seed, stage1)
+    if stage1.method == "auto":
+        return _resolve_auto(conn, video_id, seed, stage1)
     raise NotImplementedError(
         f"Stage1 method {stage1.method!r} not yet wired. yolo/gt_box "
         "prompt strategies remain future work."
+    )
+
+
+def _resolve_auto(conn, video_id: str, seed: int, stage1) -> Path:
+    """Generate prompts on demand via the automated OCR-anchored prompter.
+
+    Always regenerates (cheap: GD runs at ~1 frame/segment). Requires an OCR
+    segments.csv at `<segments_root>/<video_id>/segments.csv`.
+    """
+    from pipeline.prompts import build_prompter
+
+    if not stage1.segments_root:
+        raise RuntimeError(
+            "stage1_prompting.segments_root must be set for method='auto' "
+            "(path to the OCR slot-timeline root)."
+        )
+    segments_csv = Path(stage1.segments_root) / video_id / "segments.csv"
+    if not segments_csv.exists():
+        raise RuntimeError(f"OCR segments.csv missing for {video_id}: {segments_csv}")
+
+    frames_row = conn.execute(
+        "SELECT frames_dir FROM videos WHERE video_id = ?", (video_id,)
+    ).fetchone()
+    if frames_row is None:
+        raise RuntimeError(f"Video {video_id} not in manifest.")
+    prompter = build_prompter(stage1)
+    return prompter.run(
+        video_id=video_id,
+        frames_dir=Path(frames_row["frames_dir"]),
+        seed=seed,
+        segments_csv=segments_csv,
     )
 
 
@@ -215,6 +248,23 @@ def run_one_video(
         results_dir=results_dir,
         src_fps=1.0,    # TODO: pull from videos.fps once that column is populated
     )
+
+    # ── Post-process: dedup ghost / duplicate tracks on the output masks ──
+    dd = config.postprocess.dedup
+    if dd.enabled:
+        from pipeline.postprocess import dedup_masks
+        print(f"=== dedup: {results_dir / 'masks'} -> {results_dir / 'masks_dedup'} ===")
+        log["dedup"] = dedup_masks(
+            results_dir / "masks",
+            results_dir / "masks_dedup",
+            prompts_path,
+            iou_thr=dd.iou_thr,
+            min_lifespan_overlap=dd.min_lifespan_overlap,
+            min_mean_area_frac=dd.min_mean_area_frac,
+            min_frames=dd.min_frames,
+        )
+        with open(results_dir / "log.json", "w") as fp:
+            json.dump(log, fp, indent=2, default=str)
 
     dump_config_snapshot(cfg_dict, results_dir, log_path=results_dir / "log.json")
     print(f"Snapshotted config -> {results_dir / '_config.yaml'}")
