@@ -1,0 +1,4 @@
+start_i,end_i,n_frames,start_src,end_src,start_sec,end_sec,arm1,arm2,arm3,arm4
+0,6149,6150,0,6149,0.0,205.0,small grasping retractor,fenestrated bipolar forceps,camera,vessel sealer extend
+6150,6449,300,6150,6449,205.0,215.0,small grasping retractor,fenestrated bipolar forceps,camera,camera
+6450,8089,1640,6450,8089,215.0,269.6,small grasping retractor,fenestrated bipolar forceps,camera,monopolar curved scissors

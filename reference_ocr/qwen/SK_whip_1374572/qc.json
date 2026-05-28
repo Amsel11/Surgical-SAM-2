@@ -1,0 +1,12 @@
+{
+  "video_id": "SK_whip_1374572",
+  "n_frames": 7584,
+  "n_ocr_calls": 1012,
+  "n_segments": 1,
+  "distinct_instruments": [
+    "camera"
+  ],
+  "stride": 30,
+  "elapsed_sec": 111.8,
+  "sec_per_sample": 0.44
+}

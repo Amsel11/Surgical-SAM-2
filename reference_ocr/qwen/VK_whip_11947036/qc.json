@@ -1,0 +1,15 @@
+{
+  "video_id": "VK_whip_11947036",
+  "n_frames": 6839,
+  "n_ocr_calls": 912,
+  "n_segments": 1,
+  "distinct_instruments": [
+    "camera",
+    "fenestrated bipolar forceps",
+    "monopolar curved scissors",
+    "small grasping retractor"
+  ],
+  "stride": 30,
+  "elapsed_sec": 149.5,
+  "sec_per_sample": 0.653
+}

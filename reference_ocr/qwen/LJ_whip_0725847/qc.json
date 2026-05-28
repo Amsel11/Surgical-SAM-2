@@ -1,0 +1,16 @@
+{
+  "video_id": "LJ_whip_0725847",
+  "n_frames": 8090,
+  "n_ocr_calls": 1080,
+  "n_segments": 3,
+  "distinct_instruments": [
+    "camera",
+    "fenestrated bipolar forceps",
+    "monopolar curved scissors",
+    "small grasping retractor",
+    "vessel sealer extend"
+  ],
+  "stride": 30,
+  "elapsed_sec": 182.0,
+  "sec_per_sample": 0.672
+}

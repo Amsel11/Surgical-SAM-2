@@ -1,0 +1,15 @@
+{
+  "video_id": "DC_whip_11609423",
+  "n_frames": 2590,
+  "n_ocr_calls": 352,
+  "n_segments": 9,
+  "distinct_instruments": [
+    "fenestrated bipolar forceps",
+    "small grasping retractor",
+    "tip-up fenestrated grasper",
+    "vessel sealer extend"
+  ],
+  "stride": 30,
+  "elapsed_sec": 61.2,
+  "sec_per_sample": 0.695
+}

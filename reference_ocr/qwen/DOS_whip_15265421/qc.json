@@ -1,0 +1,15 @@
+{
+  "video_id": "DOS_whip_15265421",
+  "n_frames": 13698,
+  "n_ocr_calls": 1828,
+  "n_segments": 13,
+  "distinct_instruments": [
+    "camera",
+    "fenestrated bipolar forceps",
+    "monopolar curved scissors",
+    "tip-up fenestrated grasper"
+  ],
+  "stride": 30,
+  "elapsed_sec": 306.8,
+  "sec_per_sample": 0.67
+}

@@ -1,0 +1,29 @@
+start_i,end_i,n_frames,start_src,end_src,start_sec,end_sec,arm1,arm2,arm3,arm4
+0,1077,1078,0,1077,0.0,35.9,small grasping retractor,fenestrated bipolar forceps,,vessel sealer extend
+1078,1109,32,1078,1109,35.9,37.0,small grasping retractor,fenestrated bipolar forceps,vessel sealer extend,vessel sealer extend
+1110,1139,30,1110,1139,37.0,38.0,small grasping retractor,fenestrated bipolar forceps,,vessel sealer extend
+1140,1242,103,1140,1242,38.0,41.4,small grasping retractor,fenestrated bipolar forceps,vessel sealer extend,vessel sealer extend
+1243,7949,6707,1243,7949,41.4,265.0,small grasping retractor,fenestrated bipolar forceps,,vessel sealer extend
+7950,8039,90,7950,8039,265.0,268.0,small grasping retractor,fenestrated bipolar forceps,vessel sealer extend,vessel sealer extend
+8040,8099,60,8040,8099,268.0,270.0,small grasping retractor,fenestrated bipolar forceps,,vessel sealer extend
+8100,8208,109,8100,8208,270.0,273.6,small grasping retractor,fenestrated bipolar forceps,vessel sealer extend,vessel sealer extend
+8209,14219,6011,8209,14219,273.6,474.0,small grasping retractor,fenestrated bipolar forceps,,vessel sealer extend
+14220,14279,60,14220,14279,474.0,476.0,small grasping retractor,fenestrated bipolar forceps,camera,vessel sealer extend
+14280,14549,270,14280,14549,476.0,485.0,small grasping retractor,fenestrated bipolar forceps,,vessel sealer extend
+14550,14579,30,14550,14579,485.0,486.0,small grasping retractor,fenestrated bipolar forceps,tip-up fenestrated grasper,vessel sealer extend
+14580,15509,930,14580,15509,486.0,517.0,small grasping retractor,fenestrated bipolar forceps,,vessel sealer extend
+15510,15803,294,15510,15803,517.0,526.8,small grasping retractor,fenestrated bipolar forceps,tip-up fenestrated grasper,vessel sealer extend
+15804,15983,180,15804,15983,526.8,532.8,small grasping retractor,fenestrated bipolar forceps,,vessel sealer extend
+15984,16000,17,15984,16000,532.8,533.3,small grasping retractor,fenestrated bipolar forceps,tip-up fenestrated grasper,vessel sealer extend
+16001,16169,169,16001,16169,533.4,539.0,small grasping retractor,fenestrated bipolar forceps,,vessel sealer extend
+16170,16259,90,16170,16259,539.0,542.0,small grasping retractor,fenestrated bipolar forceps,vessel sealer extend,vessel sealer extend
+16260,16349,90,16260,16349,542.0,545.0,small grasping retractor,fenestrated bipolar forceps,,vessel sealer extend
+16350,16379,30,16350,16379,545.0,546.0,small grasping retractor,fenestrated bipolar forceps,vessel sealer extend,vessel sealer extend
+16380,17069,690,16380,17069,546.0,569.0,small grasping retractor,fenestrated bipolar forceps,,vessel sealer extend
+17070,17099,30,17070,17099,569.0,570.0,small grasping retractor,fenestrated bipolar forceps,monopolar curved scissors,vessel sealer extend
+17100,17279,180,17100,17279,570.0,576.0,small grasping retractor,fenestrated bipolar forceps,,vessel sealer extend
+17280,17369,90,17280,17369,576.0,579.0,small grasping retractor,fenestrated bipolar forceps,tip-up fenestrated grasper,vessel sealer extend
+17370,17399,30,17370,17399,579.0,580.0,small grasping retractor,fenestrated bipolar forceps,monopolar curved scissors,vessel sealer extend
+17400,19169,1770,17400,19169,580.0,639.0,small grasping retractor,fenestrated bipolar forceps,,vessel sealer extend
+19170,19198,29,19170,19198,639.0,639.9,small grasping retractor,fenestrated bipolar forceps,vessel sealer extend,vessel sealer extend
+19199,29115,9917,19199,29115,640.0,970.5,small grasping retractor,fenestrated bipolar forceps,,vessel sealer extend

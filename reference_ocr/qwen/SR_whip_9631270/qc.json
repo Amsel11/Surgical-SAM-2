@@ -1,0 +1,12 @@
+{
+  "video_id": "SR_whip_9631270",
+  "n_frames": 7744,
+  "n_ocr_calls": 1036,
+  "n_segments": 1,
+  "distinct_instruments": [
+    "camera"
+  ],
+  "stride": 30,
+  "elapsed_sec": 108.4,
+  "sec_per_sample": 0.417
+}

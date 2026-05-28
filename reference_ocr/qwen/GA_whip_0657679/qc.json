@@ -1,0 +1,14 @@
+{
+  "video_id": "GA_whip_0657679",
+  "n_frames": 27171,
+  "n_ocr_calls": 3624,
+  "n_segments": 11,
+  "distinct_instruments": [
+    "camera",
+    "tip-up fenestrated grasper",
+    "vessel sealer extend"
+  ],
+  "stride": 30,
+  "elapsed_sec": 326.8,
+  "sec_per_sample": 0.36
+}

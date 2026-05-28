@@ -1,0 +1,14 @@
+start_i,end_i,n_frames,start_src,end_src,start_sec,end_sec,arm1,arm2,arm3,arm4
+0,29,30,0,29,0.0,1.0,,,camera,monopolar curved scissors
+30,119,90,30,119,1.0,4.0,tip-up fenestrated grasper,,camera,monopolar curved scissors
+120,209,90,120,209,4.0,7.0,tip-up fenestrated grasper,tip-up fenestrated grasper,camera,monopolar curved scissors
+210,329,120,210,329,7.0,11.0,tip-up fenestrated grasper,,camera,monopolar curved scissors
+330,419,90,330,419,11.0,14.0,,,camera,monopolar curved scissors
+420,509,90,420,509,14.0,17.0,tip-up fenestrated grasper,,camera,monopolar curved scissors
+510,689,180,510,689,17.0,23.0,,,camera,monopolar curved scissors
+690,719,30,690,719,23.0,24.0,tip-up fenestrated grasper,,camera,monopolar curved scissors
+720,989,270,720,989,24.0,33.0,,,camera,monopolar curved scissors
+990,1109,120,990,1109,33.0,37.0,,tip-up fenestrated grasper,camera,monopolar curved scissors
+1110,1229,120,1110,1229,37.0,41.0,,,camera,monopolar curved scissors
+1230,2579,1350,1230,2579,41.0,86.0,,fenestrated bipolar forceps,camera,monopolar curved scissors
+2580,13697,11118,2580,13697,86.0,456.6,tip-up fenestrated grasper,fenestrated bipolar forceps,camera,monopolar curved scissors

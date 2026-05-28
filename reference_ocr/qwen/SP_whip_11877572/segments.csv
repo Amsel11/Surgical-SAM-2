@@ -1,0 +1,3 @@
+start_i,end_i,n_frames,start_src,end_src,start_sec,end_sec,arm1,arm2,arm3,arm4
+0,1517,1518,0,1517,0.0,50.6,,camera,camera,
+1518,8596,7079,1518,8596,50.6,286.5,small grasping retractor,fenestrated bipolar forceps,camera,vessel sealer extend

@@ -1,0 +1,16 @@
+{
+  "video_id": "RV_whip_11406119",
+  "n_frames": 8772,
+  "n_ocr_calls": 1172,
+  "n_segments": 26,
+  "distinct_instruments": [
+    "camera",
+    "fenestrated bipolar forceps",
+    "force bipolar",
+    "monopolar curved scissors",
+    "tip-up fenestrated grasper"
+  ],
+  "stride": 30,
+  "elapsed_sec": 182.1,
+  "sec_per_sample": 0.62
+}

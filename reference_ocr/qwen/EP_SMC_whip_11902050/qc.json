@@ -1,0 +1,15 @@
+{
+  "video_id": "EP_SMC_whip_11902050",
+  "n_frames": 7478,
+  "n_ocr_calls": 1000,
+  "n_segments": 1,
+  "distinct_instruments": [
+    "camera",
+    "fenestrated bipolar forceps",
+    "small grasping retractor",
+    "vessel sealer extend"
+  ],
+  "stride": 30,
+  "elapsed_sec": 169.0,
+  "sec_per_sample": 0.673
+}

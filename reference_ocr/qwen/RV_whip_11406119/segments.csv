@@ -1,0 +1,27 @@
+start_i,end_i,n_frames,start_src,end_src,start_sec,end_sec,arm1,arm2,arm3,arm4
+0,3749,3750,0,3749,0.0,125.0,,camera,camera,
+3750,3899,150,3750,3899,125.0,130.0,,camera,camera,tip-up fenestrated grasper
+3900,3929,30,3900,3929,130.0,131.0,,camera,camera,
+3930,3959,30,3930,3959,131.0,132.0,tip-up fenestrated grasper,camera,camera,
+3960,3980,21,3960,3980,132.0,132.7,tip-up fenestrated grasper,camera,camera,tip-up fenestrated grasper
+3981,4139,159,3981,4139,132.7,138.0,,camera,camera,tip-up fenestrated grasper
+4140,4245,106,4140,4245,138.0,141.5,,camera,camera,
+4246,4319,74,4246,4319,141.5,144.0,tip-up fenestrated grasper,camera,camera,
+4320,4409,90,4320,4409,144.0,147.0,,camera,camera,
+4410,4649,240,4410,4649,147.0,155.0,tip-up fenestrated grasper,camera,camera,
+4650,5099,450,4650,5099,155.0,170.0,,camera,camera,
+5100,5189,90,5100,5189,170.0,173.0,,camera,camera,tip-up fenestrated grasper
+5190,5969,780,5190,5969,173.0,199.0,,camera,camera,
+5970,5999,30,5970,5999,199.0,200.0,,camera,camera,tip-up fenestrated grasper
+6000,6059,60,6000,6059,200.0,202.0,force bipolar,camera,camera,tip-up fenestrated grasper
+6060,6299,240,6060,6299,202.0,210.0,force bipolar,camera,camera,
+6300,6571,272,6300,6571,210.0,219.0,force bipolar,camera,monopolar curved scissors,
+6572,7409,838,6572,7409,219.1,247.0,force bipolar,camera,monopolar curved scissors,tip-up fenestrated grasper
+7410,7499,90,7410,7499,247.0,250.0,fenestrated bipolar forceps,camera,monopolar curved scissors,tip-up fenestrated grasper
+7500,7589,90,7500,7589,250.0,253.0,force bipolar,camera,monopolar curved scissors,tip-up fenestrated grasper
+7590,7679,90,7590,7679,253.0,256.0,fenestrated bipolar forceps,camera,monopolar curved scissors,tip-up fenestrated grasper
+7680,7919,240,7680,7919,256.0,264.0,force bipolar,camera,monopolar curved scissors,tip-up fenestrated grasper
+7920,7949,30,7920,7949,264.0,265.0,fenestrated bipolar forceps,camera,monopolar curved scissors,tip-up fenestrated grasper
+7950,8339,390,7950,8339,265.0,278.0,force bipolar,camera,monopolar curved scissors,tip-up fenestrated grasper
+8340,8399,60,8340,8399,278.0,280.0,fenestrated bipolar forceps,camera,monopolar curved scissors,tip-up fenestrated grasper
+8400,8771,372,8400,8771,280.0,292.4,force bipolar,camera,monopolar curved scissors,tip-up fenestrated grasper

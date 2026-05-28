@@ -1,0 +1,15 @@
+{
+  "video_id": "RR_whip_16769698",
+  "n_frames": 13367,
+  "n_ocr_calls": 1784,
+  "n_segments": 1,
+  "distinct_instruments": [
+    "camera",
+    "fenestrated bipolar forceps",
+    "small grasping retractor",
+    "vessel sealer extend"
+  ],
+  "stride": 30,
+  "elapsed_sec": 284.7,
+  "sec_per_sample": 0.637
+}

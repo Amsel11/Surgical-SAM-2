@@ -1,0 +1,29 @@
+start_i,end_i,n_frames,start_src,end_src,start_sec,end_sec,arm1,arm2,arm3,arm4
+0,179,180,0,179,0.0,6.0,,camera,camera,
+180,226,47,180,226,6.0,7.5,,camera,,
+227,2429,2203,227,2429,7.6,81.0,,camera,camera,
+2430,2609,180,2430,2609,81.0,87.0,,camera,camera,tip-up fenestrated grasper
+2610,2789,180,2610,2789,87.0,93.0,,camera,camera,
+2790,2879,90,2790,2879,93.0,96.0,tip-up fenestrated grasper,camera,camera,
+2880,2969,90,2880,2969,96.0,99.0,camera,camera,,
+2970,2999,30,2970,2999,99.0,100.0,camera,,,
+3000,3059,60,3000,3059,100.0,102.0,camera,camera,,
+3060,3089,30,3060,3089,102.0,103.0,camera,camera,,tip-up fenestrated grasper
+3090,3149,60,3090,3149,103.0,105.0,camera,camera,,
+3150,3179,30,3150,3179,105.0,106.0,camera,camera,,tip-up fenestrated grasper
+3180,3239,60,3180,3239,106.0,108.0,camera,camera,,
+3240,3359,120,3240,3359,108.0,112.0,camera,camera,tip-up fenestrated grasper,
+3360,3449,90,3360,3449,112.0,115.0,camera,,,
+3450,3509,60,3450,3509,115.0,117.0,camera,camera,,
+3510,3629,120,3510,3629,117.0,121.0,camera,camera,,tip-up fenestrated grasper
+3630,3659,30,3630,3659,121.0,122.0,camera,camera,,
+3660,3779,120,3660,3779,122.0,126.0,camera,camera,tip-up fenestrated grasper,
+3780,4199,420,3780,4199,126.0,140.0,camera,camera,,
+4200,4259,60,4200,4259,140.0,142.0,camera,camera,,tip-up fenestrated grasper
+4260,4619,360,4260,4619,142.0,154.0,camera,camera,,
+4620,5189,570,4620,5189,154.0,173.0,,camera,camera,vessel sealer extend
+5190,5249,60,5190,5249,173.0,175.0,,,camera,vessel sealer extend
+5250,6029,780,5250,6029,175.0,201.0,,fenestrated bipolar forceps,camera,vessel sealer extend
+6030,6359,330,6030,6359,201.0,212.0,small grasping retractor,fenestrated bipolar forceps,camera,vessel sealer extend
+6360,6569,210,6360,6569,212.0,219.0,,fenestrated bipolar forceps,camera,vessel sealer extend
+6570,10547,3978,6570,10547,219.0,351.6,small grasping retractor,fenestrated bipolar forceps,camera,vessel sealer extend

@@ -1,0 +1,3 @@
+start_i,end_i,n_frames,start_src,end_src,start_sec,end_sec,arm1,arm2,arm3,arm4
+0,4019,4020,0,4019,0.0,134.0,tip-up fenestrated grasper,fenestrated bipolar forceps,camera,monopolar curved scissors
+4020,7295,3276,4020,7295,134.0,243.2,small grasping retractor,fenestrated bipolar forceps,camera,monopolar curved scissors

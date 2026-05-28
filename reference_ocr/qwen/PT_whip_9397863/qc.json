@@ -1,0 +1,17 @@
+{
+  "video_id": "PT_whip_9397863",
+  "n_frames": 29116,
+  "n_ocr_calls": 3884,
+  "n_segments": 28,
+  "distinct_instruments": [
+    "camera",
+    "fenestrated bipolar forceps",
+    "monopolar curved scissors",
+    "small grasping retractor",
+    "tip-up fenestrated grasper",
+    "vessel sealer extend"
+  ],
+  "stride": 30,
+  "elapsed_sec": 631.0,
+  "sec_per_sample": 0.649
+}

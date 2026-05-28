@@ -1,0 +1,15 @@
+{
+  "video_id": "JB_whip_1477332",
+  "n_frames": 7287,
+  "n_ocr_calls": 972,
+  "n_segments": 1,
+  "distinct_instruments": [
+    "camera",
+    "fenestrated bipolar forceps",
+    "small grasping retractor",
+    "vessel sealer extend"
+  ],
+  "stride": 30,
+  "elapsed_sec": 165.2,
+  "sec_per_sample": 0.677
+}

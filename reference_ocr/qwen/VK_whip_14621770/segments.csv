@@ -1,0 +1,106 @@
+start_i,end_i,n_frames,start_src,end_src,start_sec,end_sec,arm1,arm2,arm3,arm4
+0,179,180,0,179,0.0,6.0,,camera,,
+180,209,30,180,209,6.0,7.0,,camera,,tip-up fenestrated grasper
+210,269,60,210,269,7.0,9.0,,camera,,
+270,539,270,270,539,9.0,18.0,tip-up fenestrated grasper,camera,,
+540,599,60,540,599,18.0,20.0,,camera,,
+600,689,90,600,689,20.0,23.0,,camera,tip-up fenestrated grasper,tip-up fenestrated grasper
+690,749,60,690,749,23.0,25.0,,camera,,tip-up fenestrated grasper
+750,869,120,750,869,25.0,29.0,,camera,,
+870,1109,240,870,1109,29.0,37.0,,,,camera
+1110,1199,90,1110,1199,37.0,40.0,,,tip-up fenestrated grasper,camera
+1200,1229,30,1200,1229,40.0,41.0,,,,camera
+1230,1289,60,1230,1289,41.0,43.0,,tip-up fenestrated grasper,,camera
+1290,1739,450,1290,1739,43.0,58.0,,,,camera
+1740,1769,30,1740,1769,58.0,59.0,vessel sealer extend,,,camera
+1770,1799,30,1770,1799,59.0,60.0,tip-up fenestrated grasper,,,camera
+1800,2254,455,1800,2254,60.0,75.1,,,,camera
+2255,3269,1015,2255,3269,75.2,109.0,,camera,vessel sealer extend,fenestrated bipolar forceps
+3270,3869,600,3270,3869,109.0,129.0,force bipolar,camera,vessel sealer extend,fenestrated bipolar forceps
+3870,3929,60,3870,3929,129.0,131.0,force bipolar,camera,vessel sealer extend,force bipolar
+3930,6266,2337,3930,6266,131.0,208.9,force bipolar,camera,vessel sealer extend,fenestrated bipolar forceps
+6267,6299,33,6267,6299,208.9,210.0,force bipolar,camera,vessel sealer extend,force bipolar
+6300,6449,150,6300,6449,210.0,215.0,force bipolar,camera,vessel sealer extend,fenestrated bipolar forceps
+6450,6479,30,6450,6479,215.0,216.0,fenestrated bipolar forceps,camera,vessel sealer extend,fenestrated bipolar forceps
+6480,7799,1320,6480,7799,216.0,260.0,force bipolar,camera,vessel sealer extend,fenestrated bipolar forceps
+7800,7859,60,7800,7859,260.0,262.0,fenestrated bipolar forceps,camera,vessel sealer extend,fenestrated bipolar forceps
+7860,7901,42,7860,7901,262.0,263.4,force bipolar,camera,vessel sealer extend,fenestrated bipolar forceps
+7902,7927,26,7902,7927,263.4,264.2,force bipolar,camera,vessel sealer extend,vessel sealer extend
+7928,8070,143,7928,8070,264.3,269.0,force bipolar,camera,vessel sealer extend,
+8071,8189,119,8071,8189,269.0,273.0,force bipolar,camera,vessel sealer extend,fenestrated bipolar forceps
+8190,8249,60,8190,8249,273.0,275.0,fenestrated bipolar forceps,camera,vessel sealer extend,fenestrated bipolar forceps
+8250,8309,60,8250,8309,275.0,277.0,force bipolar,camera,vessel sealer extend,fenestrated bipolar forceps
+8310,8339,30,8310,8339,277.0,278.0,force bipolar,camera,vessel sealer extend,vessel sealer extend
+8340,8369,30,8340,8369,278.0,279.0,force bipolar,camera,vessel sealer extend,fenestrated bipolar forceps
+8370,8523,154,8370,8523,279.0,284.1,fenestrated bipolar forceps,camera,vessel sealer extend,fenestrated bipolar forceps
+8524,8579,56,8524,8579,284.1,286.0,force bipolar,camera,vessel sealer extend,force bipolar
+8580,8608,29,8580,8608,286.0,286.9,force bipolar,camera,vessel sealer extend,vessel sealer extend
+8609,8669,61,8609,8669,287.0,289.0,force bipolar,camera,vessel sealer extend,fenestrated bipolar forceps
+8670,8714,45,8670,8714,289.0,290.5,force bipolar,camera,vessel sealer extend,force bipolar
+8715,8789,75,8715,8789,290.5,293.0,force bipolar,camera,vessel sealer extend,fenestrated bipolar forceps
+8790,8853,64,8790,8853,293.0,295.1,force bipolar,camera,vessel sealer extend,
+8854,8909,56,8854,8909,295.1,297.0,fenestrated bipolar forceps,camera,vessel sealer extend,fenestrated bipolar forceps
+8910,8939,30,8910,8939,297.0,298.0,fenestrated bipolar forceps,camera,vessel sealer extend,vessel sealer extend
+8940,8999,60,8940,8999,298.0,300.0,force bipolar,camera,vessel sealer extend,vessel sealer extend
+9000,9029,30,9000,9029,300.0,301.0,force bipolar,camera,vessel sealer extend,force bipolar
+9030,9059,30,9030,9059,301.0,302.0,fenestrated bipolar forceps,camera,vessel sealer extend,force bipolar
+9060,9239,180,9060,9239,302.0,308.0,fenestrated bipolar forceps,camera,vessel sealer extend,fenestrated bipolar forceps
+9240,9329,90,9240,9329,308.0,311.0,fenestrated bipolar forceps,camera,vessel sealer extend,
+9330,9359,30,9330,9359,311.0,312.0,force bipolar,camera,vessel sealer extend,
+9360,9389,30,9360,9389,312.0,313.0,force bipolar,camera,vessel sealer extend,fenestrated bipolar forceps
+9390,9448,59,9390,9448,313.0,314.9,fenestrated bipolar forceps,camera,vessel sealer extend,fenestrated bipolar forceps
+9449,9509,61,9449,9509,315.0,317.0,force bipolar,camera,vessel sealer extend,fenestrated bipolar forceps
+9510,9775,266,9510,9775,317.0,325.8,force bipolar,camera,vessel sealer extend,
+9776,9809,34,9776,9809,325.9,327.0,force bipolar,camera,vessel sealer extend,fenestrated bipolar forceps
+9810,9839,30,9810,9839,327.0,328.0,fenestrated bipolar forceps,camera,vessel sealer extend,fenestrated bipolar forceps
+9840,9989,150,9840,9989,328.0,333.0,fenestrated bipolar forceps,camera,vessel sealer extend,tip-up fenestrated grasper
+9990,10049,60,9990,10049,333.0,335.0,fenestrated bipolar forceps,camera,vessel sealer extend,fenestrated bipolar forceps
+10050,10139,90,10050,10139,335.0,338.0,force bipolar,camera,vessel sealer extend,fenestrated bipolar forceps
+10140,10169,30,10140,10169,338.0,339.0,force bipolar,camera,vessel sealer extend,tip-up fenestrated grasper
+10170,10289,120,10170,10289,339.0,343.0,fenestrated bipolar forceps,camera,vessel sealer extend,fenestrated bipolar forceps
+10290,10349,60,10290,10349,343.0,345.0,fenestrated bipolar forceps,camera,vessel sealer extend,tip-up fenestrated grasper
+10350,10379,30,10350,10379,345.0,346.0,fenestrated bipolar forceps,camera,vessel sealer extend,fenestrated bipolar forceps
+10380,10432,53,10380,10432,346.0,347.7,force bipolar,camera,vessel sealer extend,fenestrated bipolar forceps
+10433,10440,8,10433,10440,347.8,348.0,force bipolar,camera,vessel sealer extend,
+10441,10559,119,10441,10559,348.0,352.0,force bipolar,camera,vessel sealer extend,tip-up fenestrated grasper
+10560,10589,30,10560,10589,352.0,353.0,force bipolar,camera,vessel sealer extend,fenestrated bipolar forceps
+10590,10679,90,10590,10679,353.0,356.0,force bipolar,camera,vessel sealer extend,tip-up fenestrated grasper
+10680,10795,116,10680,10795,356.0,359.8,force bipolar,camera,vessel sealer extend,fenestrated bipolar forceps
+10796,10829,34,10796,10829,359.9,361.0,fenestrated bipolar forceps,camera,vessel sealer extend,fenestrated bipolar forceps
+10830,10889,60,10830,10889,361.0,363.0,force bipolar,camera,vessel sealer extend,fenestrated bipolar forceps
+10890,10919,30,10890,10919,363.0,364.0,force bipolar,camera,vessel sealer extend,
+10920,11009,90,10920,11009,364.0,367.0,force bipolar,camera,vessel sealer extend,tip-up fenestrated grasper
+11010,11069,60,11010,11069,367.0,369.0,force bipolar,camera,vessel sealer extend,fenestrated bipolar forceps
+11070,11129,60,11070,11129,369.0,371.0,force bipolar,camera,vessel sealer extend,
+11130,11279,150,11130,11279,371.0,376.0,force bipolar,camera,vessel sealer extend,fenestrated bipolar forceps
+11280,11309,30,11280,11309,376.0,377.0,force bipolar,camera,vessel sealer extend,
+11310,11429,120,11310,11429,377.0,381.0,force bipolar,camera,vessel sealer extend,tip-up fenestrated grasper
+11430,11939,510,11430,11939,381.0,398.0,force bipolar,camera,vessel sealer extend,fenestrated bipolar forceps
+11940,11999,60,11940,11999,398.0,400.0,fenestrated bipolar forceps,camera,vessel sealer extend,fenestrated bipolar forceps
+12000,12089,90,12000,12089,400.0,403.0,force bipolar,camera,vessel sealer extend,fenestrated bipolar forceps
+12090,12179,90,12090,12179,403.0,406.0,fenestrated bipolar forceps,camera,vessel sealer extend,fenestrated bipolar forceps
+12180,12239,60,12180,12239,406.0,408.0,force bipolar,camera,vessel sealer extend,fenestrated bipolar forceps
+12240,12299,60,12240,12299,408.0,410.0,force bipolar,camera,vessel sealer extend,tip-up fenestrated grasper
+12300,12389,90,12300,12389,410.0,413.0,force bipolar,camera,vessel sealer extend,fenestrated bipolar forceps
+12390,12419,30,12390,12419,413.0,414.0,force bipolar,camera,vessel sealer extend,
+12420,12424,5,12420,12424,414.0,414.1,force bipolar,camera,vessel sealer extend,fenestrated bipolar forceps
+12425,12509,85,12425,12509,414.2,417.0,fenestrated bipolar forceps,camera,vessel sealer extend,fenestrated bipolar forceps
+12510,12539,30,12510,12539,417.0,418.0,force bipolar,camera,vessel sealer extend,fenestrated bipolar forceps
+12540,12599,60,12540,12599,418.0,420.0,force bipolar,camera,vessel sealer extend,tip-up fenestrated grasper
+12600,12659,60,12600,12659,420.0,422.0,force bipolar,camera,vessel sealer extend,fenestrated bipolar forceps
+12660,12719,60,12660,12719,422.0,424.0,force bipolar,camera,vessel sealer extend,tip-up fenestrated grasper
+12720,12839,120,12720,12839,424.0,428.0,force bipolar,camera,vessel sealer extend,fenestrated bipolar forceps
+12840,12899,60,12840,12899,428.0,430.0,force bipolar,camera,vessel sealer extend,
+12900,12959,60,12900,12959,430.0,432.0,force bipolar,camera,vessel sealer extend,fenestrated bipolar forceps
+12960,13079,120,12960,13079,432.0,436.0,fenestrated bipolar forceps,camera,vessel sealer extend,fenestrated bipolar forceps
+13080,13109,30,13080,13109,436.0,437.0,force bipolar,camera,vessel sealer extend,fenestrated bipolar forceps
+13110,13229,120,13110,13229,437.0,441.0,fenestrated bipolar forceps,camera,vessel sealer extend,fenestrated bipolar forceps
+13230,13469,240,13230,13469,441.0,449.0,force bipolar,camera,vessel sealer extend,fenestrated bipolar forceps
+13470,13829,360,13470,13829,449.0,461.0,force bipolar,camera,vessel sealer extend,tip-up fenestrated grasper
+13830,13889,60,13830,13889,461.0,463.0,fenestrated bipolar forceps,camera,vessel sealer extend,tip-up fenestrated grasper
+13890,14189,300,13890,14189,463.0,473.0,force bipolar,camera,vessel sealer extend,tip-up fenestrated grasper
+14190,14221,32,14190,14221,473.0,474.0,fenestrated bipolar forceps,camera,vessel sealer extend,tip-up fenestrated grasper
+14222,14939,718,14222,14939,474.1,498.0,force bipolar,camera,vessel sealer extend,tip-up fenestrated grasper
+14940,15029,90,14940,15029,498.0,501.0,fenestrated bipolar forceps,camera,vessel sealer extend,tip-up fenestrated grasper
+15030,15595,566,15030,15595,501.0,519.8,force bipolar,camera,vessel sealer extend,tip-up fenestrated grasper
+15596,15596,1,15596,15596,519.9,519.9,fenestrated bipolar forceps,camera,vessel sealer extend,tip-up fenestrated grasper

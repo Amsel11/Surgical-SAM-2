@@ -1,0 +1,15 @@
+{
+  "video_id": "JP_whip_liver_5151473",
+  "n_frames": 7599,
+  "n_ocr_calls": 1016,
+  "n_segments": 3,
+  "distinct_instruments": [
+    "camera",
+    "fenestrated bipolar forceps",
+    "small grasping retractor",
+    "vessel sealer extend"
+  ],
+  "stride": 30,
+  "elapsed_sec": 172.2,
+  "sec_per_sample": 0.675
+}

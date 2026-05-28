@@ -1,0 +1,16 @@
+{
+  "video_id": "VK_whip_14621770",
+  "n_frames": 15597,
+  "n_ocr_calls": 2080,
+  "n_segments": 105,
+  "distinct_instruments": [
+    "camera",
+    "fenestrated bipolar forceps",
+    "force bipolar",
+    "tip-up fenestrated grasper",
+    "vessel sealer extend"
+  ],
+  "stride": 30,
+  "elapsed_sec": 393.6,
+  "sec_per_sample": 0.755
+}

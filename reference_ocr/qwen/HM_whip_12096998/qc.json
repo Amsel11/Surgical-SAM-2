@@ -1,0 +1,16 @@
+{
+  "video_id": "HM_whip_12096998",
+  "n_frames": 7296,
+  "n_ocr_calls": 976,
+  "n_segments": 2,
+  "distinct_instruments": [
+    "camera",
+    "fenestrated bipolar forceps",
+    "monopolar curved scissors",
+    "small grasping retractor",
+    "tip-up fenestrated grasper"
+  ],
+  "stride": 30,
+  "elapsed_sec": 167.7,
+  "sec_per_sample": 0.685
+}
