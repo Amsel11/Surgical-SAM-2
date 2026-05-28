@@ -58,6 +58,20 @@ class SAM2VideoTracker(VideoTracker):
         src_fps: float = 1.0,
     ) -> dict[str, Any]:
         from sam2.build_sam import build_sam2_video_predictor  # heavy
+        # SAM 2's build calls hydra.compose() expecting Hydra to be
+        # initialized with sam2's own configs/ dir in the search path. Our
+        # pipeline already initialized Hydra against our own configs/ — clear
+        # and re-init pointing at sam2's configs.
+        import sam2 as _sam2_pkg
+        from hydra import initialize_config_dir
+        from hydra.core.global_hydra import GlobalHydra
+        # Init at the sam2 package root (not <pkg>/configs) so that the
+        # cfg.config value `configs/sam2.1/sam2.1_hiera_s.yaml` resolves as
+        # written, matching what SAM 2's own examples expect.
+        sam2_configs = str(Path(_sam2_pkg.__file__).parent)
+        if GlobalHydra.instance().is_initialized():
+            GlobalHydra.instance().clear()
+        initialize_config_dir(config_dir=sam2_configs, version_base=None)
 
         cfg = self.cfg
         results_dir = Path(results_dir).resolve()

@@ -60,6 +60,48 @@ def list_frames(frames_dir: str | Path) -> list[str]:
     return names
 
 
+def _stem_int(name: str) -> int | None:
+    """int of a filename stem, or None if the stem isn't a plain integer."""
+    try:
+        return int(os.path.splitext(name)[0])
+    except ValueError:
+        return None
+
+
+def frame_files_ordered(frames_dir: str | Path) -> list[str]:
+    """Frame filenames in the exact order SAM's video loader consumes them.
+
+    Loader index ``i`` — which is also the mask filename stem written by the
+    trackers (``{i:05d}.png``) and therefore the ``frame_idx`` in
+    extract_ft_labels output — maps to ``frame_files_ordered(frames_dir)[i]``.
+
+    This is the single source of truth for that ordering: prepare_loader_dir
+    builds its symlink dir from this list, and downstream tooling
+    (tools/ft_dataset_convert.py) uses it to map a loader index back to the
+    source image it was cut from. Keep them reading the same function so a box
+    can never attach to the wrong frame.
+    """
+    frames_dir = str(frames_dir)
+    entries = [p for p in os.listdir(frames_dir) if os.path.splitext(p)[1] in IMG_EXTS]
+    if not entries:
+        raise RuntimeError(f"No image frames found in {frames_dir}")
+    # Already integer-named (``<int>.ext``) — loader sorts by int stem.
+    if all(_stem_int(p) is not None for p in entries):
+        return sorted(entries, key=_stem_int)
+    # ``frame_<digits>`` — loader re-indexes by the captured integer.
+    parsed: list[tuple[int, str]] = []
+    for p in entries:
+        m = FRAME_RE.match(os.path.splitext(p)[0])
+        if not m:
+            raise RuntimeError(
+                f"Frames in {frames_dir} use an unsupported naming scheme; "
+                f"expected '<int>.ext' or 'frame_<digits>.ext', got {p!r}"
+            )
+        parsed.append((int(m.group(1)), p))
+    parsed.sort()
+    return [p for _, p in parsed]
+
+
 def prepare_loader_dir(frames_dir: str | Path) -> tuple[str, int, callable]:
     """Return (loader_dir, source_offset, cleanup_fn).
 
@@ -74,36 +116,20 @@ def prepare_loader_dir(frames_dir: str | Path) -> tuple[str, int, callable]:
     (and map clicker-emitted source indices into loader space by subtracting).
     """
     frames_dir = str(frames_dir)
-    entries = [p for p in os.listdir(frames_dir) if os.path.splitext(p)[1] in IMG_EXTS]
-    if not entries:
-        raise RuntimeError(f"No image frames found in {frames_dir}")
+    ordered = frame_files_ordered(frames_dir)
 
-    # Already integer-named — pass through.
-    try:
-        sorted(entries, key=lambda p: int(os.path.splitext(p)[0]))
+    # Already integer-named — pass through (the loader sorts by int stem itself).
+    if all(_stem_int(p) is not None for p in ordered):
         return frames_dir, 0, lambda: None
-    except ValueError:
-        pass
 
-    # Try ``frame_<digits>`` pattern.
-    parsed = []
-    for p in entries:
-        stem, ext = os.path.splitext(p)
-        m = FRAME_RE.match(stem)
-        if not m:
-            raise RuntimeError(
-                f"Frames in {frames_dir} use an unsupported naming scheme; "
-                f"expected '<int>.ext' or 'frame_<digits>.ext', got {p!r}"
-            )
-        parsed.append((int(m.group(1)), ext, p))
-    parsed.sort()
-
-    tmp = tempfile.mkdtemp(prefix="surgsam2_renamed_")
+    # ``frame_<digits>`` — symlink to a temp dir re-indexed 0..N-1.
     frames_dir_abs = os.path.abspath(frames_dir)
-    for new_idx, (_, ext, original) in enumerate(parsed):
+    tmp = tempfile.mkdtemp(prefix="surgsam2_renamed_")
+    for new_idx, original in enumerate(ordered):
+        ext = os.path.splitext(original)[1]
         os.symlink(os.path.join(frames_dir_abs, original), os.path.join(tmp, f"{new_idx}{ext}"))
-    offset = parsed[0][0]
-    print(f"Renamed-symlink dir: {tmp} (source offset = {offset}, {len(parsed)} frames)")
+    offset = int(FRAME_RE.match(os.path.splitext(ordered[0])[0]).group(1))
+    print(f"Renamed-symlink dir: {tmp} (source offset = {offset}, {len(ordered)} frames)")
 
     def _cleanup():
         shutil.rmtree(tmp, ignore_errors=True)
