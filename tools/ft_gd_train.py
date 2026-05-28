@@ -155,8 +155,16 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--lr", type=float, default=5e-5,
                    help="Peak LR (full FT default; try 1e-4 with --lora).")
     p.add_argument("--batch-size", type=int, default=2)
+    # Smoke knobs: validate the training plumbing in minutes before a 4h run.
+    p.add_argument("--max-steps", type=int, default=-1,
+                   help="Cap total optimizer steps (-1 = use --epochs). "
+                        "Smoke test: --max-steps 50 should drive loss down quickly.")
+    p.add_argument("--limit-train", type=int, default=0,
+                   help="Use only the first N train images (0 = all). For a "
+                        "single-/few-image overfit smoke test.")
     p.add_argument("--weight-decay", type=float, default=1e-4)
     p.add_argument("--warmup-ratio", type=float, default=0.1)
+    p.add_argument("--logging-steps", type=int, default=20)
     p.add_argument("--num-workers", type=int, default=4)
     p.add_argument("--seed", type=int, default=1)
     # augmentation
@@ -201,6 +209,9 @@ def main(argv: list[str] | None = None) -> int:
           f"photometric={args.photometric}")
 
     train_ds = DetDataset(args.data_dir / "train.jsonl", transform=transform)
+    if args.limit_train > 0:
+        train_ds.records = train_ds.records[:args.limit_train]
+        print(f"[ft_gd_train] SMOKE: limiting train to {len(train_ds)} images")
     val_path = args.data_dir / "val.jsonl"
     val_ds = DetDataset(val_path, transform=None) if val_path.exists() and len(
         [l for l in val_path.read_text().splitlines() if l.strip()]) else None
@@ -212,15 +223,18 @@ def main(argv: list[str] | None = None) -> int:
     targs = TrainingArguments(
         output_dir=str(args.output_dir),
         num_train_epochs=args.epochs,
+        max_steps=args.max_steps,        # -1 = disabled (use epochs)
         per_device_train_batch_size=args.batch_size,
         per_device_eval_batch_size=args.batch_size,
         learning_rate=args.lr,
         weight_decay=args.weight_decay,
         warmup_ratio=args.warmup_ratio,
         lr_scheduler_type="cosine",
-        logging_steps=20,
-        save_strategy="epoch",
-        eval_strategy="epoch" if val_ds else "no",
+        logging_steps=args.logging_steps,
+        # In smoke mode (--max-steps) skip eval — we're checking plumbing, and
+        # evaluating the full val set every epoch would dominate runtime.
+        save_strategy="no" if args.max_steps > 0 else "epoch",
+        eval_strategy="epoch" if (val_ds and args.max_steps <= 0) else "no",
         save_total_limit=2,
         remove_unused_columns=False,   # keep our image/boxes columns for the collator
         dataloader_num_workers=args.num_workers,
