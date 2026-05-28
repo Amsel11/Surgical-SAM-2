@@ -65,6 +65,30 @@ def _collapse_adjacent(rows: list[dict]) -> list[dict]:
     return out
 
 
+def fill_blanks_per_slot(rows: list[dict]) -> list[dict]:
+    """Forward-fill each arm slot across blank reads.
+
+    The da Vinci strip shows MOUNTED instruments; a slot reading empty is
+    usually OCR transiently failing to read a still-mounted tool (occlusion /
+    glare), not a real unmount. So per slot, an empty reading inherits the last
+    non-empty instrument seen. Slots that are genuinely never populated (e.g.
+    the camera arm) stay empty. Assumes "once mounted, stays mounted" — fine for
+    this cohort's stable configs; a true mid-video unmount would be masked, but
+    that only leaves a stale track the segmenter/dedup can shed.
+    """
+    rows = [dict(r) for r in rows]
+    last = ["", "", "", ""]
+    for r in rows:
+        arms = list(r["arms"])
+        for s in range(4):
+            if arms[s] == "":
+                arms[s] = last[s]
+            else:
+                last[s] = arms[s]
+        r["arms"] = tuple(arms)
+    return rows
+
+
 def _merge_span(a: dict, b: dict, keep_arms: tuple) -> dict:
     """Span two adjacent segments into one carrying `keep_arms`."""
     lo, hi = (a, b) if a["start_i"] <= b["start_i"] else (b, a)
@@ -82,7 +106,9 @@ def infer_fps(rows: list[dict]) -> float:
     return span_f / span_s if span_s > 0 else 30.0
 
 
-def smooth(rows: list[dict], min_frames: int) -> list[dict]:
+def smooth(rows: list[dict], min_frames: int, fill_blanks: bool = True) -> list[dict]:
+    if fill_blanks:
+        rows = fill_blanks_per_slot(rows)
     rows = _collapse_adjacent([dict(r) for r in rows])
     while len(rows) > 1:
         i = min(range(len(rows)), key=lambda k: _dur(rows[k]))
@@ -117,13 +143,14 @@ def write_segments(rows: list[dict], path: Path) -> None:
             ])
 
 
-def smooth_file(in_csv: Path, out_csv: Path, min_seconds: float) -> tuple[int, int]:
+def smooth_file(in_csv: Path, out_csv: Path, min_seconds: float,
+                fill_blanks: bool = True) -> tuple[int, int]:
     rows = load_segments(in_csv)
     if not rows:
         write_segments(rows, out_csv)
         return 0, 0
     min_frames = max(1, round(min_seconds * infer_fps(rows)))
-    smoothed = smooth(rows, min_frames)
+    smoothed = smooth(rows, min_frames, fill_blanks=fill_blanks)
     write_segments(smoothed, out_csv)
     return len(rows), len(smoothed)
 
@@ -137,10 +164,14 @@ def main() -> int:
     ap.add_argument("--min-seconds", type=float, default=5.0,
                     help="Segments shorter than this (converted to frames via "
                          "per-video fps) are absorbed as flicker. Default 5s.")
+    ap.add_argument("--no-fill-blanks", action="store_true",
+                    help="Disable per-slot forward-fill of blank reads "
+                         "(default: fill, treating blanks as OCR misses).")
     args = ap.parse_args()
+    fill = not args.no_fill_blanks
 
     if args.in_csv:
-        n0, n1 = smooth_file(args.in_csv, args.out_csv, args.min_seconds)
+        n0, n1 = smooth_file(args.in_csv, args.out_csv, args.min_seconds, fill)
         print(f"{args.in_csv}: {n0} -> {n1} segments")
         return 0
     if args.in_dir:
@@ -149,7 +180,7 @@ def main() -> int:
             if not seg.exists():
                 continue
             out = args.out_dir / d.name / "segments.csv"
-            n0, n1 = smooth_file(seg, out, args.min_seconds)
+            n0, n1 = smooth_file(seg, out, args.min_seconds, fill)
             print(f"{d.name}: {n0} -> {n1}")
         return 0
     ap.error("provide --in-csv/--out-csv or --in-dir/--out-dir")
