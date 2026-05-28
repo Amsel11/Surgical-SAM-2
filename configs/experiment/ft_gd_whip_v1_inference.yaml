@@ -9,20 +9,29 @@
 #     standard HF model directory at checkpoints/gdino_whip_ft_v1/
 #     (transformers from_pretrained loads a dir exactly like a model id).
 #   - All Phase 0/1 prereqs from zs_gd_whip_v1_inference (vocab + .gdino_venv).
-#   - Re-run tools.run_dino_prompter with --checkpoint to populate prompt_sets
-#     under method='dino' for THIS checkpoint (the orchestrator can't tell
-#     ZS from FT from the prompt_method alone — the manifest UPSERT means
-#     whichever was run last is what gets read).
+#   - Generate FT prompt_sets at seed=2 (see scope.seed below):
+#       run_dino_prompter --all-cohort whip --seed 2 \
+#           --checkpoint checkpoints/gdino_whip_ft_v1
+#     (or let the orchestrator generate them on demand — _resolve_dino runs the
+#     prompter with this checkpoint when no seed=2 dino prompt_set exists yet).
 #
-# Run (in .sam3_venv, after FT prompt_sets are in the manifest):
+# Run (in .sam3_venv):
 #   python -m pipeline run +experiment=ft_gd_whip_v1_inference
 #
-# To avoid the UPSERT collision with ZS results during the ablation, run
-# ZS at seed=1 and FT at seed=2 (or use distinct prompt_method tags by
-# extending PromptMethod — TODO for the ablation harness).
+# COLLISION NOTE: prompt_sets are keyed (video, seed, method) and _resolve_dino
+# reuses an existing same-key prompt_set regardless of checkpoint. So ZS and FT
+# would clobber each other at the same seed. We sidestep that by pinning the FT
+# arm to scope.seed=2 (ZS stays at seed=1) — distinct prompt_sets AND distinct
+# results/.../seed_<k>/ output dirs, so the ablation arms never overwrite. The
+# cleaner fix (checkpoint-tagged prompt_sets) is deferred to the ablation harness.
 
 name: dino_ft_whip_v1
 description: FT Grounding DINO Stage-1 (HF-native), SAM 3 OOB Stage-2, whip cohort
+
+scope:
+  # seed=2 keeps the FT arm's prompt_sets + masks separate from the ZS arm
+  # (seed=1). See the COLLISION NOTE above.
+  seed: 2
 
 stage1_prompting:
   method: dino
