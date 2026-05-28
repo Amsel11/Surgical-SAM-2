@@ -306,72 +306,71 @@ def fuzzy_canonical(text, choices, fuzz_threshold, mode_hints, fuzz_mod):
 
 
 # ---------------------------------------------------------------------------
-# Main
+# Frame access — a frames-dir of PNGs, OR a video decoded in-memory (no files)
 # ---------------------------------------------------------------------------
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--video-id", required=True)
-    ap.add_argument("--frames-dir", type=Path, required=True)
-    ap.add_argument("--out-dir", type=Path, required=True)
-    ap.add_argument("--queries-file", type=Path,
-                    default=REPO_ROOT / "configs/cardiac_whip_vocabulary.json")
-    ap.add_argument("--strip-px", type=int, default=0,
-                    help="Fixed strip height in px; 0 = use --strip-frac.")
-    ap.add_argument("--strip-frac", type=float, default=0.17,
-                    help="Strip height as fraction of frame height.")
-    ap.add_argument("--stride", type=int, default=30)
-    ap.add_argument("--mode-window", type=int, default=3,
-                    help="Sample-level mode filter window (in stride samples).")
-    ap.add_argument("--refine-thresh", type=float, default=12.0)
-    ap.add_argument("--source-fps", type=float, default=30.0)
-    # Paddle-specific knobs:
-    ap.add_argument("--upscale", type=float, default=3.0,
-                    help="Bicubic upscale factor before OCR. Critical at 480p.")
-    ap.add_argument("--fuzz-threshold", type=int, default=70,
-                    help="rapidfuzz token_set_ratio threshold (0-100).")
-    ap.add_argument("--paddle-conf-floor", type=float, default=0.5,
-                    help="Drop paddle detections whose mean conf is below this.")
-    ap.add_argument("--use-gpu", action="store_true",
-                    help="Use Paddle's GPU backend (requires paddlepaddle-gpu).")
-    args = ap.parse_args()
+_VIDEO_EXTS = (".mp4", ".mov", ".avi", ".mkv", ".m4v", ".mpg", ".mpeg")
 
-    out_dir = args.out_dir / args.video_id
+
+def _strip_px(h, strip_px, strip_frac):
+    return strip_px if strip_px > 0 else max(40, int(h * strip_frac))
+
+
+def iter_video_files(videos_dir: Path):
+    return sorted(p for p in Path(videos_dir).iterdir()
+                  if p.is_file() and p.suffix.lower() in _VIDEO_EXTS)
+
+
+def decode_video_strips(video_path: Path, target_fps: float,
+                        strip_px: int, strip_frac: float):
+    """Stream a video and keep ONLY the bottom-strip crop of every
+    (native_fps / target_fps)-th frame, in memory. No full frames retained, no
+    files written. Returns (strips, srcs, w, h, native_fps).
+
+    Decoding is sequential (reliable across codecs — no frame seeking).
+    `srcs` are the true source frame indices, so seconds = src / native_fps.
+    """
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        raise RuntimeError(f"cannot open video: {video_path}")
+    native = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    step = max(1, round(native / max(target_fps, 1e-6)))
+    strips, srcs = [], []
+    w = h = 0
+    idx = 0
+    while True:
+        ok, frame = cap.read()
+        if not ok:
+            break
+        if idx % step == 0:
+            if not strips:
+                h, w = frame.shape[:2]
+            sp = _strip_px(frame.shape[0], strip_px, strip_frac)
+            strips.append(frame[frame.shape[0] - sp:, :].copy())
+            srcs.append(idx)
+        idx += 1
+    cap.release()
+    return strips, srcs, w, h, native
+
+
+# ---------------------------------------------------------------------------
+# Per-video pipeline (backend-agnostic: takes strip-crop accessors)
+# ---------------------------------------------------------------------------
+
+def process_one(*, video_id, n, get_strip, get_src, w, h, src_fps, out_dir,
+                ocr, choices, mode_hints, fuzz_mod, args):
+    """Run the OCR slot-timeline pipeline for one video.
+
+    `get_strip(i)` returns the bottom-strip crop (ndarray, full frame width) or
+    None; `get_src(i)` returns that sample's source frame index.
+    """
+    out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    fracs = get_slot_fracs(w, h)
 
-    canonical_names, ui_to_canonical, modes = load_vocab(args.queries_file)
-    choices = build_fuzz_choices(canonical_names, ui_to_canonical)
-    mode_hints = set(_MODE_HINTS_DEFAULT) | {m.lower() for m in modes}
-
-    frames = sorted(
-        list(args.frames_dir.glob("frame_*.png")) +
-        list(args.frames_dir.glob("frame_*.jpg")),
-        key=lambda p: src_idx_from_name(p.name) or 0,
-    )
-    if not frames:
-        print(f"No frames in {args.frames_dir}", file=sys.stderr)
-        return 1
-    N = len(frames)
-    print(f"{args.video_id}: {N} frames, stride={args.stride}, "
-          f"upscale={args.upscale}x, fuzz>={args.fuzz_threshold}")
-
-    print("Loading PaddleOCR + rapidfuzz ...")
-    import rapidfuzz as _rf
-
-    class _Fuzz:
-        process = _rf.process
-        fuzz = _rf.fuzz
-    fuzz_mod = _Fuzz()
-
-    ocr = build_paddle(args.use_gpu)
-    print("PaddleOCR ready.\n")
-
-    def strip_px_for(h):
-        return args.strip_px if args.strip_px > 0 else max(40, int(h * args.strip_frac))
-
-    sample_idx = list(range(0, N, args.stride))
-    if (N - 1) not in sample_idx:
-        sample_idx.append(N - 1)
+    sample_idx = list(range(0, n, args.stride))
+    if (n - 1) not in sample_idx:
+        sample_idx.append(n - 1)
     raw_canon = {s: [] for s in SLOTS}
     raw_text  = {s: [] for s in SLOTS}
     raw_score = {s: [] for s in SLOTS}
@@ -380,17 +379,12 @@ def main():
     t0 = time.time()
     n_calls = 0
     for k, fi in enumerate(sample_idx):
-        img = cv2.imread(str(frames[fi]))
-        if img is None:
+        strip = get_strip(fi)
+        if strip is None:
             for s in SLOTS:
-                raw_canon[s].append(None)
-                raw_text[s].append("")
-                raw_score[s].append(0.0)
-                raw_conf[s].append(0.0)
+                raw_canon[s].append(None); raw_text[s].append("")
+                raw_score[s].append(0.0); raw_conf[s].append(0.0)
             continue
-        h, w = img.shape[:2]
-        fracs = get_slot_fracs(w, h)
-        strip = strip_crop(img, strip_px_for(h))
         for slot in SLOTS:
             a, b = fracs[slot]
             region = strip[:, int(w * a): int(w * b)]
@@ -399,8 +393,7 @@ def main():
                 canon, score = None, 0.0
             else:
                 canon, score = fuzzy_canonical(
-                    text, choices, args.fuzz_threshold, mode_hints, fuzz_mod,
-                )
+                    text, choices, args.fuzz_threshold, mode_hints, fuzz_mod)
             raw_canon[slot].append(canon)
             raw_text[slot].append(text)
             raw_score[slot].append(score)
@@ -409,17 +402,13 @@ def main():
         if (k + 1) % 25 == 0:
             print(f"  {k+1}/{len(sample_idx)} samples  {time.time()-t0:.0f}s")
 
-    # ---- mode filter per slot ----
     sm = {s: mode_window(raw_canon[s], args.mode_window) for s in SLOTS}
 
     def keep(v):
         return v is not None and v not in ("empty", "unknown")
+    sample_cfg = [{s: sm[s][j] for s in SLOTS if keep(sm[s][j])}
+                  for j in range(len(sample_idx))]
 
-    sample_cfg = []
-    for j in range(len(sample_idx)):
-        sample_cfg.append({s: sm[s][j] for s in SLOTS if keep(sm[s][j])})
-
-    # ---- form segments ----
     seg_bounds = [0]
     for j in range(1, len(sample_cfg)):
         if sample_cfg[j] != sample_cfg[j - 1]:
@@ -430,10 +419,9 @@ def main():
         prev = None
         best_fi, best_d = lo_fi, -1.0
         for fi in range(lo_fi, hi_fi + 1):
-            img = cv2.imread(str(frames[fi]))
-            if img is None:
+            st = get_strip(fi)
+            if st is None:
                 continue
-            st = strip_crop(img, strip_px_for(img.shape[0]))
             if prev is not None:
                 d = strip_diff(prev, st)
                 if d > best_d:
@@ -448,15 +436,13 @@ def main():
         cfg = sample_cfg[j0]
         start_fi = sample_idx[j0]
         if b > 0:
-            start_fi = refine_boundary(
-                sample_idx[seg_bounds[b] - 1], sample_idx[j0],
-            )
+            start_fi = refine_boundary(sample_idx[seg_bounds[b] - 1], sample_idx[j0])
         end_fi = sample_idx[j1]
         segments.append({"start": start_fi, "end": end_fi, "cfg": cfg})
     for b in range(len(segments) - 1):
         segments[b]["end"] = segments[b + 1]["start"] - 1
     if segments:
-        segments[-1]["end"] = N - 1
+        segments[-1]["end"] = n - 1
 
     merged = []
     for seg in segments:
@@ -466,85 +452,188 @@ def main():
             merged.append(dict(seg))
     segments = merged
 
-    # ---- per-frame timeline ----
     timeline = []
     for seg in segments:
         for fi in range(seg["start"], seg["end"] + 1):
-            src = src_idx_from_name(frames[fi].name)
+            src = get_src(fi)
             timeline.append({
-                "i": fi,
-                "src_frame": src,
-                "sec": round(src / args.source_fps, 2) if src is not None else None,
+                "i": fi, "src_frame": src,
+                "sec": round(src / src_fps, 2) if src is not None else None,
                 "arms": {str(k): v for k, v in sorted(seg["cfg"].items())},
                 "instruments": sorted(set(seg["cfg"].values())),
             })
-
     elapsed = time.time() - t0
 
-    # ---- outputs ----
     (out_dir / "timeline.json").write_text(json.dumps({
-        "video_id": args.video_id, "n_frames": N, "stride": args.stride,
+        "video_id": video_id, "n_frames": n, "stride": args.stride,
         "n_ocr_calls": n_calls, "n_segments": len(segments),
         "elapsed_sec": round(elapsed, 1), "frames": timeline,
-        "backend": "paddle", "upscale": args.upscale,
+        "backend": "paddle", "src_fps": src_fps, "upscale": args.upscale,
         "fuzz_threshold": args.fuzz_threshold,
         "paddle_conf_floor": args.paddle_conf_floor,
     }, indent=2))
 
     with (out_dir / "segments.csv").open("w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(["start_i", "end_i", "n_frames", "start_src", "end_src",
-                    "start_sec", "end_sec", "arm1", "arm2", "arm3", "arm4"])
+        wtr = csv.writer(f)
+        wtr.writerow(["start_i", "end_i", "n_frames", "start_src", "end_src",
+                      "start_sec", "end_sec", "arm1", "arm2", "arm3", "arm4"])
         for seg in segments:
-            s_src = src_idx_from_name(frames[seg["start"]].name)
-            e_src = src_idx_from_name(frames[seg["end"]].name)
+            s_src = get_src(seg["start"])
+            e_src = get_src(seg["end"])
             cfg = seg["cfg"]
-            w.writerow([
+            wtr.writerow([
                 seg["start"], seg["end"], seg["end"] - seg["start"] + 1,
                 s_src, e_src,
-                round(s_src / args.source_fps, 1) if s_src is not None else "",
-                round(e_src / args.source_fps, 1) if e_src is not None else "",
+                round(s_src / src_fps, 1) if s_src is not None else "",
+                round(e_src / src_fps, 1) if e_src is not None else "",
                 cfg.get(1, ""), cfg.get(2, ""), cfg.get(3, ""), cfg.get(4, ""),
             ])
 
-    # Audit trail: every paddle read at every sample, even ones the mode
-    # filter dropped. Diagnostic gap the Qwen pipeline currently has.
     with (out_dir / "raw_reads.csv").open("w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow([
-            "sample_idx", "frame_idx", "slot",
-            "paddle_text", "paddle_conf", "fuzz_score",
-            "canon_pre_mode_filter", "canon_post_mode_filter",
-        ])
+        wtr = csv.writer(f)
+        wtr.writerow(["sample_idx", "frame_idx", "slot", "paddle_text",
+                      "paddle_conf", "fuzz_score",
+                      "canon_pre_mode_filter", "canon_post_mode_filter"])
         for j, fi in enumerate(sample_idx):
             for s in SLOTS:
-                w.writerow([
-                    j, fi, s,
-                    raw_text[s][j], round(raw_conf[s][j], 3),
-                    round(raw_score[s][j], 1),
-                    raw_canon[s][j] or "",
-                    sm[s][j] or "",
-                ])
+                wtr.writerow([j, fi, s, raw_text[s][j], round(raw_conf[s][j], 3),
+                              round(raw_score[s][j], 1), raw_canon[s][j] or "",
+                              sm[s][j] or ""])
 
     distinct = sorted({i for seg in segments for i in seg["cfg"].values()})
-    qc = {
-        "video_id": args.video_id, "n_frames": N, "n_ocr_calls": n_calls,
+    (out_dir / "qc.json").write_text(json.dumps({
+        "video_id": video_id, "n_frames": n, "n_ocr_calls": n_calls,
         "n_segments": len(segments), "distinct_instruments": distinct,
         "stride": args.stride, "elapsed_sec": round(elapsed, 1),
         "sec_per_sample": round(elapsed / max(len(sample_idx), 1), 3),
-        "backend": "paddle", "upscale": args.upscale,
+        "backend": "paddle", "src_fps": src_fps, "upscale": args.upscale,
         "fuzz_threshold": args.fuzz_threshold,
         "paddle_conf_floor": args.paddle_conf_floor,
-    }
-    (out_dir / "qc.json").write_text(json.dumps(qc, indent=2))
+    }, indent=2))
 
-    print(f"\n{args.video_id} done: {N} frames, {n_calls} OCR calls, "
-          f"{len(segments)} segments, {elapsed:.0f}s")
-    print(f"  instruments: {distinct}")
+    print(f"\n{video_id} done: {n} samples, {n_calls} OCR calls, "
+          f"{len(segments)} segments, {elapsed:.0f}s; instruments: {distinct}")
     for seg in segments:
         print(f"  [{seg['start']:5d}-{seg['end']:5d}] {seg['cfg']}")
-    print(f"  wrote {out_dir}/timeline.json, segments.csv, raw_reads.csv, qc.json")
-    return 0
+    print(f"  wrote {out_dir}/segments.csv (+ timeline.json, raw_reads.csv, qc.json)")
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    # Input: exactly one of --frames-dir / --video / --videos-dir.
+    ap.add_argument("--frames-dir", type=Path,
+                    help="Dir of frame_<n>.png for ONE video.")
+    ap.add_argument("--video", type=Path,
+                    help="A single video file (decoded in-memory, no frames saved).")
+    ap.add_argument("--videos-dir", type=Path,
+                    help="Dir of video files; each is processed in turn, in-memory.")
+    ap.add_argument("--video-id",
+                    help="Override the output id (default: dir/file name).")
+    ap.add_argument("--out-dir", type=Path, required=True)
+    ap.add_argument("--queries-file", type=Path,
+                    default=REPO_ROOT / "configs/cardiac_whip_vocabulary.json")
+    ap.add_argument("--strip-px", type=int, default=0,
+                    help="Fixed strip height in px; 0 = use --strip-frac.")
+    ap.add_argument("--strip-frac", type=float, default=0.17,
+                    help="Strip height as fraction of frame height.")
+    ap.add_argument("--stride", type=int, default=30,
+                    help="OCR every Nth sampled frame.")
+    ap.add_argument("--mode-window", type=int, default=3)
+    ap.add_argument("--refine-thresh", type=float, default=12.0)
+    ap.add_argument("--source-fps", type=float, default=30.0,
+                    help="fps for the seconds columns in --frames-dir mode "
+                         "(video modes read fps from the file).")
+    ap.add_argument("--video-fps", type=float, default=1.0,
+                    help="Sampling fps when decoding a video (default 1/s).")
+    ap.add_argument("--upscale", type=float, default=3.0)
+    ap.add_argument("--fuzz-threshold", type=int, default=70)
+    ap.add_argument("--paddle-conf-floor", type=float, default=0.5)
+    ap.add_argument("--use-gpu", action="store_true")
+    args = ap.parse_args()
+
+    n_inputs = sum(x is not None for x in (args.frames_dir, args.video, args.videos_dir))
+    if n_inputs != 1:
+        ap.error("provide exactly one of --frames-dir / --video / --videos-dir")
+
+    canonical_names, ui_to_canonical, modes = load_vocab(args.queries_file)
+    choices = build_fuzz_choices(canonical_names, ui_to_canonical)
+    mode_hints = set(_MODE_HINTS_DEFAULT) | {m.lower() for m in modes}
+
+    print("Loading PaddleOCR + rapidfuzz ...")
+    import rapidfuzz as _rf
+
+    class _Fuzz:
+        process = _rf.process
+        fuzz = _rf.fuzz
+    fuzz_mod = _Fuzz()
+    ocr = build_paddle(args.use_gpu)
+    print("PaddleOCR ready.\n")
+
+    # Build the list of videos to process.
+    if args.videos_dir:
+        vids = iter_video_files(args.videos_dir)
+        if not vids:
+            print(f"No video files in {args.videos_dir}", file=sys.stderr)
+            return 1
+        jobs = [("video", v, args.video_id or v.stem) for v in vids]
+    elif args.video:
+        jobs = [("video", args.video, args.video_id or args.video.stem)]
+    else:
+        jobs = [("frames", args.frames_dir, args.video_id or args.frames_dir.name)]
+
+    rc = 0
+    for kind, ref, vid in jobs:
+        try:
+            if kind == "video":
+                strips, srcs, w, h, native = decode_video_strips(
+                    ref, args.video_fps, args.strip_px, args.strip_frac)
+                if not strips:
+                    print(f"{vid}: no frames decoded — skipping", file=sys.stderr)
+                    rc = 1
+                    continue
+                print(f"{vid}: {len(strips)} sampled frames @ {args.video_fps}/s "
+                      f"({w}x{h}, native {native:.1f} fps)")
+                process_one(
+                    video_id=vid, n=len(strips),
+                    get_strip=lambda i, _s=strips: _s[i],
+                    get_src=lambda i, _s=srcs: _s[i],
+                    w=w, h=h, src_fps=native, out_dir=args.out_dir / vid,
+                    ocr=ocr, choices=choices, mode_hints=mode_hints,
+                    fuzz_mod=fuzz_mod, args=args)
+            else:
+                paths = sorted(
+                    list(ref.glob("frame_*.png")) + list(ref.glob("frame_*.jpg")),
+                    key=lambda p: src_idx_from_name(p.name) or 0)
+                if not paths:
+                    print(f"No frames in {ref}", file=sys.stderr)
+                    rc = 1
+                    continue
+                probe = cv2.imread(str(paths[0]))
+                h, w = probe.shape[:2]
+
+                def _gs(i, _p=paths):
+                    img = cv2.imread(str(_p[i]))
+                    if img is None:
+                        return None
+                    sp = _strip_px(img.shape[0], args.strip_px, args.strip_frac)
+                    return img[img.shape[0] - sp:, :]
+
+                print(f"{vid}: {len(paths)} frames ({w}x{h})")
+                process_one(
+                    video_id=vid, n=len(paths),
+                    get_strip=_gs,
+                    get_src=lambda i, _p=paths: src_idx_from_name(_p[i].name),
+                    w=w, h=h, src_fps=args.source_fps, out_dir=args.out_dir / vid,
+                    ocr=ocr, choices=choices, mode_hints=mode_hints,
+                    fuzz_mod=fuzz_mod, args=args)
+        except Exception as e:
+            print(f"FAILED {vid}: {e}", file=sys.stderr)
+            rc = 1
+    return rc
 
 
 if __name__ == "__main__":

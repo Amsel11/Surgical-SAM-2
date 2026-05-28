@@ -40,25 +40,27 @@ PaddleOCR pulls `paddlepaddle` automatically; if it doesn't on Apple Silicon,
 run `pip install paddlepaddle`. The script auto-detects the PaddleOCR 2.x vs 3.x
 API, so whichever version pip installs is fine.
 
-## Input expectations
+## Input — point it straight at your video folder
 
-- One directory per video, frames named `frame_<srcnum>.png` (zero-padded ok),
-  where `<srcnum>` is the source frame index (used for the timeline's
-  `start_src`/`end_src`).
-- `--source-fps` = the fps the frames were extracted at. It only affects the
-  `start_sec`/`end_sec` columns (seconds = src / source-fps); it does NOT change
-  the segmentation. The 38-video pilot used 30.
+The OCR reads videos **directly** (decoded in memory — it keeps only the bottom
+strip of each sampled frame, so **no frame files are written to disk**). Three
+input modes, pick one:
+- `--videos-dir <dir>` — process every video file in the folder (mp4/mov/avi/mkv…).
+- `--video <file>` — a single video file.
+- `--frames-dir <dir>` — a folder of pre-extracted `frame_<n>.png` (legacy).
 
-## Run — three steps, per cohort
+`--video-fps` = how often to sample the video for OCR (default 1/s — plenty,
+since tools stay mounted for minutes). In video modes the real fps is read from
+the file, so the `start_sec`/`end_sec` columns are correct automatically.
+
+## Run — three steps, whole cohort in one command
 
 ```bash
-# 1) OCR every video -> results/ocr_paddle/<video>/segments.csv (+ timeline.json, qc.json, raw_reads.csv)
-for V in /path/to/frames/*/ ; do
-  vid=$(basename "$V")
-  python tools/ocr_slots_timeline_paddle.py \
-      --video-id "$vid" --frames-dir "$V" \
-      --out-dir results/ocr_paddle --source-fps 30
-done
+# 1) OCR every video in the folder  (no frames saved; one output dir per video)
+python tools/ocr_slots_timeline_paddle.py \
+    --videos-dir /Users/schula12/whipple-transfer/clips \
+    --out-dir results/ocr_paddle \
+    --video-fps 1 --stride 5
 
 # 2) Smooth out OCR flicker (merge same-config runs + fill blank reads)
 python tools/smooth_ocr_timeline.py \
@@ -68,6 +70,11 @@ python tools/smooth_ocr_timeline.py \
 python tools/plot_ocr_timeline.py \
     --in-dir results/ocr_paddle_smoothed --out-dir plots/
 ```
+
+`--video-fps 1 --stride 5` = decode at 1 frame/s, OCR every 5th = every 5 s
+(1 s granularity for swap-boundary refinement). Output lands in
+`results/ocr_paddle/<clipname>/segments.csv` (+ `timeline.json`, `qc.json`,
+`raw_reads.csv`). Re-run a single clip with `--video <file>`.
 
 ## Output: `segments.csv`
 
