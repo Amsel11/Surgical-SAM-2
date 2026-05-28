@@ -10,7 +10,9 @@ How GroundingDINO training works (the non-obvious part):
   GD's "class head" is text-conditioned — it scores each object query against the
   TOKENS of the prompt, not a fixed-size class layer. So we do NOT resize any head
   or touch config.num_labels. Instead:
-    * prompt   = ". ".join(canonical names) + "."     (vocab order; from categories.json)
+    * prompt   = categories.json's "prompt" — built by the inference detector's
+                 own _build_prompt helper so training and inference tokenize the
+                 SAME string (vocab order preserved).
     * per box: class_labels = index of its class in that prompt (== category_id)
                boxes        = normalized cxcywh in [0, 1]
   The bipartite (Hungarian) loss then matches predicted queries to these targets.

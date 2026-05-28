@@ -228,8 +228,15 @@ def main(argv: list[str] | None = None) -> int:
     val_lines, val_pc, val_warn = build_split_lines(
         conn, grouped["val"], id_to_label, categories)
 
-    # The text prompt GD sees: canonical names joined the GroundingDINO way.
-    prompt = ". ".join(c["name"] for c in categories) + "."
+    # The text prompt GD sees. Build it with the SAME helper the inference
+    # detector uses so the FT training prompt is byte-identical to the prompt
+    # at inference (pipeline/prompts/dino.py → _grounding_dino_detector). GD's
+    # class head is text-token-conditioned — the loss matches object queries to
+    # token spans of THIS string — so any train/inference prompt drift silently
+    # misaligns the fine-tuned class space. _build_prompt is a classmethod that
+    # imports nothing heavy (numpy/PIL only), so it runs fine here in .sam3_venv.
+    from pipeline.prompts._grounding_dino_detector import GroundingDinoDetector
+    prompt, _ = GroundingDinoDetector._build_prompt([c["name"] for c in categories])
 
     print(f"--- ft_dataset_convert  (vocab: {len(categories)} classes)", file=sys.stderr)
     print(f"  input records:     {n_total}", file=sys.stderr)
