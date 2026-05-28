@@ -5,8 +5,9 @@
 # so the ablation diff comes down to a single config line.
 #
 # Prereqs:
-#   - FT'd weights produced by slurm/ft_gd_train.sh (Phase 4) and saved at
-#     checkpoints/gdino_whip_ft_v1.pth
+#   - FT'd weights produced by slurm/ft_gd_train.sh (Phase 4), saved as a
+#     standard HF model directory at checkpoints/gdino_whip_ft_v1/
+#     (transformers from_pretrained loads a dir exactly like a model id).
 #   - All Phase 0/1 prereqs from zs_gd_whip_v1_inference (vocab + .gdino_venv).
 #   - Re-run tools.run_dino_prompter with --checkpoint to populate prompt_sets
 #     under method='dino' for THIS checkpoint (the orchestrator can't tell
@@ -21,13 +22,14 @@
 # extending PromptMethod — TODO for the ablation harness).
 
 name: dino_ft_whip_v1
-description: FT Grounding DINO Stage-1 (Open-GroundingDino), SAM 3 OOB Stage-2, whip cohort
+description: FT Grounding DINO Stage-1 (HF-native), SAM 3 OOB Stage-2, whip cohort
 
 stage1_prompting:
   method: dino
-  # FT'd weights from Open-GroundingDino. Local path (transformers loads it
-  # the same way it loads an HF model id).
-  checkpoint: ${oc.env:BP_REPO,.}/checkpoints/gdino_whip_ft_v1.pth
+  # HF-native FT output: a model directory. transformers from_pretrained loads
+  # a local dir the same way it loads a hub model id, so the prompter needs no
+  # code change — only this path differs from the zero-shot arm.
+  checkpoint: ${oc.env:BP_REPO,.}/checkpoints/gdino_whip_ft_v1
   box_threshold: 0.35
   text_threshold: 0.25
 
