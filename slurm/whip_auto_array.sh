@@ -23,6 +23,11 @@ cd "$REPO"
 mkdir -p logs
 source .sam3_venv/bin/activate
 export BP_REPO="$REPO"
+# bp's populated manifest is manifest.db (local_manifest.db is olab-1 working
+# state). run.py reads frames_dir from config.infrastructure.manifest_db, which
+# interpolates ${oc.env:SURGSAM_MANIFEST,./local_manifest.db} — point it at the
+# real one so the videos table lookups resolve.
+export SURGSAM_MANIFEST="$REPO/manifest.db"
 export HF_HOME="$REPO/.hf_cache"
 mkdir -p "$HF_HOME"
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
