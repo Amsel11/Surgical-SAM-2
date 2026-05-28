@@ -1,0 +1,122 @@
+{
+  "_source": "Intuitive Da Vinci X/Xi System Instrument and Accessory Catalog, December 2023",
+  "_notes": "Names normalized to lowercase, as Grounding DINO is case-insensitive but prefers lowercase. Both 'official' name and common alias kept for fuzzy matching. The Small Graptor's UI label is 'SMALL GRASPING RETRACTOR' (we verified this in DC_whip bottom strip).",
+  "endowrist_8mm": {
+    "monopolar_cautery": [
+      "monopolar curved scissors",
+      "hot shears",
+      "permanent cautery hook",
+      "permanent cautery spatula"
+    ],
+    "bipolar_cautery": [
+      "maryland bipolar forceps",
+      "fenestrated bipolar forceps",
+      "curved bipolar dissector",
+      "micro bipolar forceps",
+      "long bipolar grasper",
+      "force bipolar"
+    ],
+    "clip_appliers": [
+      "medium-large clip applier",
+      "large clip applier",
+      "small clip applier"
+    ],
+    "needle_drivers": [
+      "large needle driver",
+      "mega needle driver",
+      "mega suturecut needle driver",
+      "large suturecut needle driver"
+    ],
+    "graspers": [
+      "prograsp forceps",
+      "long tip forceps",
+      "small graptor",
+      "grasping retractor",
+      "cobra grasper",
+      "tenaculum forceps",
+      "tip-up fenestrated grasper",
+      "cadiere forceps"
+    ],
+    "scissors": [
+      "potts scissors",
+      "round tip scissors"
+    ],
+    "specialty": [
+      "resano forceps",
+      "dual blade retractor",
+      "cardiac probe grasper",
+      "atrial retractor",
+      "black diamond micro forceps",
+      "debakey forceps"
+    ],
+    "ultrasonic": [
+      "harmonic ace curved shears"
+    ],
+    "suction": [
+      "endowrist suction irrigator"
+    ],
+    "vessel_sealer": [
+      "vessel sealer extend",
+      "vessel sealer",
+      "synchroseal"
+    ],
+    "staplers": [
+      "sureform 60 stapler",
+      "sureform 45 stapler",
+      "endowrist stapler 30"
+    ]
+  },
+  "all_queries_flat": [
+    "monopolar curved scissors",
+    "hot shears",
+    "permanent cautery hook",
+    "permanent cautery spatula",
+    "maryland bipolar forceps",
+    "fenestrated bipolar forceps",
+    "curved bipolar dissector",
+    "micro bipolar forceps",
+    "long bipolar grasper",
+    "force bipolar",
+    "medium-large clip applier",
+    "large clip applier",
+    "small clip applier",
+    "large needle driver",
+    "mega needle driver",
+    "suturecut needle driver",
+    "prograsp forceps",
+    "long tip forceps",
+    "small graptor",
+    "grasping retractor",
+    "cobra grasper",
+    "tenaculum forceps",
+    "tip-up fenestrated grasper",
+    "cadiere forceps",
+    "potts scissors",
+    "round tip scissors",
+    "resano forceps",
+    "dual blade retractor",
+    "cardiac probe grasper",
+    "atrial retractor",
+    "black diamond micro forceps",
+    "debakey forceps",
+    "harmonic ace curved shears",
+    "endowrist suction irrigator",
+    "vessel sealer extend",
+    "synchroseal",
+    "sureform stapler",
+    "endowrist stapler"
+  ],
+  "short_aliases": [
+    "scissors",
+    "cautery hook",
+    "forceps",
+    "bipolar forceps",
+    "needle driver",
+    "grasper",
+    "retractor",
+    "clip applier",
+    "stapler",
+    "vessel sealer",
+    "suction irrigator"
+  ]
+}

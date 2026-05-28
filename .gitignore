@@ -38,3 +38,22 @@ local_results/
 # Per-machine paths and credentials. Copy .env.example to .env and edit.
 .env
 .env.local
+
+# Pipeline + experimental output dirs (local artifacts, re-generatable).
+pipeline_out/
+anchor_prop_out/
+discovery_out/
+gd_detect_out/
+notebook_plots/
+ocr_overlay_videos/
+ocr_verify/
+verify_out/
+verify_out_v2/
+qwen_cls_out/
+qwen_cls_per_query_out/
+local_frames_full/
+.pytest_cache/
+
+# Root-level debug images / clips (scratch overlays, comparison frames).
+/*.png
+/*.mp4

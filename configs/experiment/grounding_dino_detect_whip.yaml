@@ -1,0 +1,69 @@
+# @package _global_
+# Standalone experiment config for the Grounding DINO text-prompted
+# detector stage. NOT YET WIRED into pipeline/run.py — keep this config
+# separate from the existing stage1/stage2 schema so the live SAM 3
+# pipeline keeps validating. Once OCR + DINO stages are productionized,
+# we'll add a `detector` block to PipelineConfig and reference this
+# config from there.
+#
+# Intent: this is the per-frame detection stage of the eventual pipeline:
+#   1. OCR (Tesseract) on bottom strip → {arm_id: instrument_name}
+#   2. THIS STAGE: Grounding DINO on the frame with those names → boxes
+#   3. SAM 3 dense tracker propagates each named box → masklets
+#
+# For now this YAML is consumed only by tools/verify_grounding_dino.py
+# (and the slurm wrapper around it). It's a flat schema — no Hydra
+# defaults list, no pydantic validation — because the detector module
+# accepts any attribute-bag config.
+
+name: grounding_dino_detect_whip_v1
+description: Grounding DINO zero-shot text-prompted detector, whip cohort, OOB
+
+# ── Detector ─────────────────────────────────────────────────────────
+# tiny  : ~1.3 GB, fast (~10 fps on A100), the default for first-pass eval
+# base  : ~3 GB,   more accurate but ~3x slower
+# Override on CLI:  ... detector.model_id=IDEA-Research/grounding-dino-base
+detector:
+  model_id: IDEA-Research/grounding-dino-tiny
+  box_threshold: 0.35
+  text_threshold: 0.25
+  device: cuda
+  # Force HF downloads onto fast scratch on bp; falls back to default cache
+  # ($HF_HOME or ~/.cache/huggingface) when unset.
+  cache_dir: ${oc.env:HF_HOME,null}
+
+# ── Scope ────────────────────────────────────────────────────────────
+# Mirror sam3_oob_whip.yaml; the verifier reads `scope.videos` only when
+# running in batch mode (the default single-video verify run uses CLI
+# override scope.videos=[DC_whip_11609423]).
+scope:
+  cohort: whip
+  videos: all
+  seed: 2
+
+# ── Text queries ─────────────────────────────────────────────────────
+# Placeholder hardcoded queries used until the OCR stage lands. These
+# are the instruments observed on DC_whip_11609423 from manual review
+# of the bottom-arm-strip overlay. Override per-video on CLI:
+#   ... detector.text_queries='["needle driver","monopolar scissors"]'
+text_queries:
+  - small grasping retractor
+  - fenestrated bipolar forceps
+  - vessel sealer
+
+# ── Verification settings ────────────────────────────────────────────
+verify:
+  # Per-frame mean IoU above this passes the "architecture works" check.
+  # Low bar by design — we're not benchmarking accuracy, just sanity.
+  pass_iou_threshold: 0.30
+  # Save annotated PNGs (manual=red, detected=cyan w/ score) here.
+  out_dir: verify_out
+  # If true, save every frame's annotated PNG; otherwise just the click
+  # frames from the prompts JSON (the only ones with ground truth).
+  save_all_frames: false
+
+# ── Infrastructure (only honored by the slurm wrapper) ───────────────
+infrastructure:
+  frames_root: ${oc.env:BP_FRAMES_ROOT,./local_frames_full}
+  results_root: ${oc.env:BP_RESULTS_ROOT,./results}
+  manifest_db: ${oc.env:SURGSAM_MANIFEST,./manifest.db}

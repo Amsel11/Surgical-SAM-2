@@ -1,0 +1,71 @@
+{
+  "_source": "Derived from OCR shootout 2026-05-20 on 102 labeled whip frames. Empirically observed to cover ~96% of strip-named instruments in the cardiac whip cohort.",
+  "_notes": "Used by run_qwen_ocr_closed_vocab.py and the Grounding DINO pipeline. Each instrument has a canonical name (returned by Qwen-closed) and a list of UI display variants observed on the da Vinci console.",
+  "canonical_instruments": [
+    {
+      "canonical": "small grasping retractor",
+      "ui_variants": [
+        "small grasping retractor",
+        "grasping retractor"
+      ],
+      "description": "Small grasper / retractor — most common in whip"
+    },
+    {
+      "canonical": "fenestrated bipolar forceps",
+      "ui_variants": [
+        "fenestrated bipolar forceps",
+        "fenestrated",
+        "forceps",
+        "bipolar forceps"
+      ],
+      "description": "Bipolar forceps for dissection / coagulation"
+    },
+    {
+      "canonical": "vessel sealer extend",
+      "ui_variants": [
+        "vessel sealer extend",
+        "vessel sealer",
+        "extend"
+      ],
+      "description": "Energy device for sealing larger vessels"
+    },
+    {
+      "canonical": "tip-up fenestrated grasper",
+      "ui_variants": [
+        "tip-up fenestrated grasper",
+        "tip-up"
+      ],
+      "description": "Alternative grasper / retractor"
+    },
+    {
+      "canonical": "monopolar curved scissors",
+      "ui_variants": [
+        "monopolar curved scissors",
+        "hot shears",
+        "scissors"
+      ],
+      "description": "Cutting / electrocautery"
+    },
+    {
+      "canonical": "force bipolar",
+      "ui_variants": [
+        "force bipolar"
+      ],
+      "description": "Alternative bipolar for fine work"
+    }
+  ],
+  "mode_indicators_to_ignore": [
+    "coag", "lcoag", "rcoag",
+    "seal", "lseal", "rseal",
+    "cut", "rcut", "lcut",
+    "liser", "laser"
+  ],
+  "all_queries_flat": [
+    "small grasping retractor",
+    "fenestrated bipolar forceps",
+    "vessel sealer extend",
+    "tip-up fenestrated grasper",
+    "monopolar curved scissors",
+    "force bipolar"
+  ]
+}
