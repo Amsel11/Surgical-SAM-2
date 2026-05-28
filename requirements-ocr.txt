@@ -1,0 +1,18 @@
+# Minimal deps for the STAGE-1 OCR workflow only (CPU / Mac-friendly).
+# This is intentionally NOT the full project stack (pyproject.toml pulls
+# torch/torchvision/sam2/hydra for the GPU tracking pipeline — not needed
+# to read the instrument strip).
+#
+# Install into a fresh venv:
+#   python3 -m venv .venv-ocr && source .venv-ocr/bin/activate
+#   pip install -r requirements-ocr.txt
+#
+# PaddleOCR pulls paddlepaddle automatically. If it doesn't resolve on
+# Apple Silicon, install the CPU wheel explicitly:  pip install paddlepaddle
+# The OCR script auto-detects the PaddleOCR 2.x vs 3.x API, so either line works.
+
+paddleocr>=2.7
+rapidfuzz>=3.0
+opencv-python>=4.7
+numpy>=1.24
+matplotlib>=3.7

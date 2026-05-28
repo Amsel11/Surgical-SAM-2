@@ -114,27 +114,103 @@ def upscale(img, factor):
     )
 
 
+def build_paddle(use_gpu: bool):
+    """Construct a PaddleOCR reader across the 2.x and 3.x APIs.
+
+    2.x: PaddleOCR(use_angle_cls=, show_log=); 3.x dropped both and renamed to
+    use_textline_orientation. Try newest-first, fall back, so whatever pip
+    installed on the Mac works.
+    """
+    from paddleocr import PaddleOCR
+    attempts = [
+        dict(lang="en", use_textline_orientation=False),       # 3.x
+        dict(lang="en", use_angle_cls=False, show_log=False),  # 2.x
+        dict(lang="en"),                                       # bare
+    ]
+    last = None
+    for kw in attempts:
+        if use_gpu:
+            kw = {**kw, "use_gpu": True}
+        try:
+            return PaddleOCR(**kw)
+        except (TypeError, ValueError) as e:
+            last = e
+            if use_gpu:  # retry once without the gpu kwarg (3.x removed it)
+                try:
+                    return PaddleOCR(**{k: v for k, v in kw.items() if k != "use_gpu"})
+                except (TypeError, ValueError) as e2:
+                    last = e2
+    raise RuntimeError(f"Could not construct PaddleOCR with any known API: {last}")
+
+
+def _extract_rows(result):
+    """Normalize PaddleOCR output to [(x0, text, conf), ...] across versions.
+
+    3.x .predict(): list of dict-like OCRResult with rec_texts / rec_scores /
+    rec_polys (or rec_boxes). 2.x .ocr(): [[ [box, (text, conf)], ... ]].
+    """
+    rows = []
+    if not result:
+        return rows
+    first = result[0]
+    # 3.x OCRResult (dict-like with rec_texts)
+    if hasattr(first, "get") and first.get("rec_texts") is not None:
+        texts = first.get("rec_texts") or []
+        scores = first.get("rec_scores") or []
+        polys = (first.get("rec_polys") or first.get("dt_polys")
+                 or first.get("rec_boxes") or [])
+        for i, t in enumerate(texts):
+            conf = float(scores[i]) if i < len(scores) else 0.0
+            x0 = 0.0
+            if i < len(polys) and polys[i] is not None:
+                pts = polys[i]
+                try:
+                    x0 = float(min(p[0] for p in pts))      # polygon
+                except (TypeError, IndexError):
+                    try:
+                        x0 = float(pts[0])                   # [x0,y0,x1,y1]
+                    except (TypeError, IndexError):
+                        x0 = 0.0
+            rows.append((x0, str(t), conf))
+        return rows
+    # 2.x nested-list format
+    page = first if isinstance(first, list) else result
+    for line in page:
+        if not line or len(line) < 2:
+            continue
+        box, payload = line[0], line[1]
+        if not payload:
+            continue
+        text = str(payload[0])
+        conf = float(payload[1]) if len(payload) > 1 else 0.0
+        x0 = min(p[0] for p in box) if box else 0.0
+        rows.append((float(x0), text, conf))
+    return rows
+
+
 def paddle_read(ocr, region, upscale_factor):
     """Run PaddleOCR on a single slot region. Returns (concatenated text,
-    mean confidence, raw detections). Concatenation is left-to-right."""
+    mean confidence, raw detections), left-to-right. API-version agnostic."""
     up = upscale(region, upscale_factor)
-    try:
-        result = ocr.ocr(up, cls=False)
-    except Exception as e:
-        print(f"  paddle error: {e}", file=sys.stderr)
-        return "", 0.0, []
-    rows = []
-    if result and result[0]:
-        for line in result[0]:
-            if not line or len(line) < 2:
-                continue
-            box, payload = line[0], line[1]
-            if not payload:
-                continue
-            text = str(payload[0])
-            conf = float(payload[1]) if len(payload) > 1 else 0.0
-            x0 = min(p[0] for p in box) if box else 0.0
-            rows.append((x0, text, conf))
+    result = None
+    if hasattr(ocr, "predict"):           # 3.x preferred
+        try:
+            result = ocr.predict(up)
+        except Exception:
+            result = None
+    if not result:
+        try:
+            result = ocr.ocr(up, cls=False)   # 2.x
+        except TypeError:
+            try:
+                result = ocr.ocr(up)
+            except Exception as e:
+                print(f"  paddle error: {e}", file=sys.stderr)
+                return "", 0.0, []
+        except Exception as e:
+            print(f"  paddle error: {e}", file=sys.stderr)
+            return "", 0.0, []
+    rows = _extract_rows(result)
     if not rows:
         return "", 0.0, []
     rows.sort(key=lambda r: r[0])
@@ -280,7 +356,6 @@ def main():
           f"upscale={args.upscale}x, fuzz>={args.fuzz_threshold}")
 
     print("Loading PaddleOCR + rapidfuzz ...")
-    from paddleocr import PaddleOCR
     import rapidfuzz as _rf
 
     class _Fuzz:
@@ -288,10 +363,7 @@ def main():
         fuzz = _rf.fuzz
     fuzz_mod = _Fuzz()
 
-    ocr_kwargs = dict(lang="en", use_angle_cls=False, show_log=False)
-    if args.use_gpu:
-        ocr_kwargs["use_gpu"] = True
-    ocr = PaddleOCR(**ocr_kwargs)
+    ocr = build_paddle(args.use_gpu)
     print("PaddleOCR ready.\n")
 
     def strip_px_for(h):
