@@ -39,7 +39,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from tools.run_qwen_ocr_closed_vocab import load_vocab  # noqa: E402
+from tools._ocr_vocab import load_vocab  # noqa: E402
 
 # Fractional slot regions (generous overlap so a name is never cut). The
 # da Vinci strip layout depends on aspect ratio: 16:9 recordings inset the
