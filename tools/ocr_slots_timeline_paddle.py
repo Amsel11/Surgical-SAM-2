@@ -123,7 +123,10 @@ def build_paddle(use_gpu: bool):
     """
     from paddleocr import PaddleOCR
     attempts = [
-        dict(lang="en", use_textline_orientation=False),       # 3.x
+        # 3.x — also skip the doc-orientation + unwarping sub-pipelines we
+        # don't need (faster init, fewer models to download/load).
+        dict(lang="en", use_textline_orientation=False,
+             use_doc_orientation_classify=False, use_doc_unwarping=False),
         dict(lang="en", use_angle_cls=False, show_log=False),  # 2.x
         dict(lang="en"),                                       # bare
     ]
@@ -153,12 +156,20 @@ def _extract_rows(result):
     if not result:
         return rows
     first = result[0]
-    # 3.x OCRResult (dict-like with rec_texts)
+    # 3.x OCRResult (dict-like with rec_texts). NOTE: these values are numpy
+    # arrays — never use `or` on them (ambiguous truth value); coerce to list /
+    # pick the first non-empty key explicitly.
     if hasattr(first, "get") and first.get("rec_texts") is not None:
-        texts = first.get("rec_texts") or []
-        scores = first.get("rec_scores") or []
-        polys = (first.get("rec_polys") or first.get("dt_polys")
-                 or first.get("rec_boxes") or [])
+        def _as_list(v):
+            return list(v) if v is not None else []
+        texts = _as_list(first.get("rec_texts"))
+        scores = _as_list(first.get("rec_scores"))
+        polys = []
+        for _k in ("rec_polys", "dt_polys", "rec_boxes"):
+            v = first.get(_k)
+            if v is not None and len(v) > 0:
+                polys = v
+                break
         for i, t in enumerate(texts):
             conf = float(scores[i]) if i < len(scores) else 0.0
             x0 = 0.0
