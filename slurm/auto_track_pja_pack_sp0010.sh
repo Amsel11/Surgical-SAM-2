@@ -27,6 +27,7 @@ set -uo pipefail
 REPO=/gpfs/data/oermannlab/users/schula12/Surgical-SAM-2
 cd "$REPO"; mkdir -p logs
 source .sam3_venv/bin/activate
+module load ffmpeg/7.1.1   # SuperPOD nodes don't carry ffmpeg on PATH by default
 
 export BP_REPO="$REPO"
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
