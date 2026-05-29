@@ -125,8 +125,13 @@ def build_paddle(use_gpu: bool):
     attempts = [
         # 3.x — also skip the doc-orientation + unwarping sub-pipelines we
         # don't need (faster init, fewer models to download/load).
+        # enable_mkldnn=False is REQUIRED on CPU: paddlepaddle 3.x's PIR
+        # new-executor oneDNN path throws "ConvertPirAttribute2RuntimeAttribute
+        # not support" on every call, producing an empty timeline. The FLAGS_*
+        # env vars don't reach the predictor; this constructor kwarg does.
         dict(lang="en", use_textline_orientation=False,
-             use_doc_orientation_classify=False, use_doc_unwarping=False),
+             use_doc_orientation_classify=False, use_doc_unwarping=False,
+             enable_mkldnn=False),
         dict(lang="en", use_angle_cls=False, show_log=False),  # 2.x
         dict(lang="en"),                                       # bare
     ]
