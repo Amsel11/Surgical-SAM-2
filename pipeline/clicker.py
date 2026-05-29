@@ -59,6 +59,15 @@ DRY_RUN: bool = False    # if True, Save buttons are no-ops with a UI notice
 # arms can be boxed without redoing the geometry.
 EDIT_MODE: bool = False
 
+# OCR-driven anchor frames. When ON, a video's anchor frames are the frames
+# where each instrument FIRST APPEARS in the OCR strip timeline (instead of the
+# blind 25/50/75% sample), so every instrument gets boxed from its start and the
+# dropdown is pre-suggested with the OCR-read instrument. Falls back to the
+# 25/50/75% sample when a video has no segments.csv. Set via --ocr-anchors.
+OCR_ANCHORS: bool = False
+OCR_ROOT: Path = REPO_ROOT / "results" / "ocr_slots_timeline_paddle_full"
+OCR_OFFSET: int = 15  # frames past the OCR change (tool fully in view, not just entering)
+
 # Per-object box colors; cycled by obj_id.
 OBJ_COLORS = [
     (60, 200, 255),   # cyan
@@ -436,6 +445,9 @@ def empty_state() -> dict:
         "frames_dir": None,
         "frame_paths": [],
         "source_frame_indices": [],
+        # OCR-anchor mode: {frame_pos: [{arm, arm_idx, ocr_name, instrument_id, label}, ...]}
+        # — the instrument(s) OCR says first appear at this anchor frame.
+        "frame_suggestions": {},
         "cur_frame_pos": 0,
         "objects": {},                # obj_id -> {instrument_id, boxes_by_frame, cutout, label}
         # active_obj_id: which obj the next-drawn box will UPDATE. None = create new obj.
@@ -517,6 +529,86 @@ def update_active_obj_box(state: dict, box: list[float]) -> None:
             obj["cutout"] = co
 
 
+def _norm_name(s: str) -> str:
+    import re
+    return re.sub(r"[^a-z0-9 ]", " ", (s or "").lower()).strip()
+
+
+def _match_instrument(ocr_name: str, choices: list[tuple[str, str]]) -> tuple[str | None, str]:
+    """Map an OCR instrument string to (instrument_id, pretty_label) from the
+    manifest vocab. Best-effort token/substring match; returns (None, ocr_name)
+    if nothing matches so the user picks manually."""
+    nn = _norm_name(ocr_name)
+    ntok = set(nn.split())
+    best, best_score = None, 0
+    for label, iid in choices:
+        disp = label.split("]")[-1].strip()  # label is "[cat] Display Name"
+        for cand in (iid.replace("_", " "), disp):
+            cn = _norm_name(cand)
+            if not cn:
+                continue
+            score = len(ntok & set(cn.split()))
+            if cn == nn:
+                score += 10
+            elif nn and (nn in cn or cn in nn):
+                score += 1
+            if score > best_score:
+                best_score, best = score, (iid, label)
+    if best is not None and (best_score >= 2 or (best_score > 0 and len(ntok) <= 2)):
+        return best
+    return (None, ocr_name)
+
+
+def _ocr_frame_plan(video_id: str, frames_dir: str | Path):
+    """Build OCR-driven anchor frames for a video. Returns
+    (frame_paths_loader_order, positions, suggestions) or None to fall back to
+    the 25/50/75% sample.
+
+    Frame paths are built from pipeline.io.frame_files_ordered so a position in
+    the list IS the loader index — the same index OCR start_i/end_i and the SAM
+    mask stems use. This keeps the saved prompts JSON keys (which fall back to
+    the array position for bp full extracts) consistent end-to-end.
+    """
+    if not OCR_ANCHORS:
+        return None
+    seg = Path(OCR_ROOT) / video_id / "segments.csv"
+    if not seg.exists():
+        return None
+    try:
+        from tools.ocr_events import appearance_events
+        from .io import frame_files_ordered
+        ordered = frame_files_ordered(frames_dir)
+    except Exception as e:  # missing frames / unsupported naming / import path
+        print(f"[ocr-anchors] {video_id}: falling back to sample ({e})")
+        return None
+    n = len(ordered)
+    events = appearance_events(seg, offset=OCR_OFFSET, n_frames=n)
+    if not events:
+        return None
+
+    frame_paths = [str(Path(frames_dir) / name) for name in ordered]
+    choices = load_instrument_choices()
+    positions: list[int] = []
+    suggestions: dict[int, list[dict]] = {}
+    for ev in events:
+        li = ev["appearance_frame"]
+        if li < 0 or li >= n:
+            continue
+        if li in positions:
+            pos = positions.index(li)
+        else:
+            positions.append(li)
+            pos = len(positions) - 1
+        iid, label = _match_instrument(ev["instrument"], choices)
+        suggestions.setdefault(pos, []).append({
+            "arm": ev["arm"], "arm_idx": ev["arm_idx"], "ocr_name": ev["instrument"],
+            "instrument_id": iid, "label": label,
+        })
+    if not positions:
+        return None
+    return frame_paths, positions, suggestions
+
+
 def start_new_video(state: dict) -> dict:
     """Load the next pending video from manifest into state."""
     conn = connect()
@@ -526,18 +618,24 @@ def start_new_video(state: dict) -> dict:
         state["status_msg"] = "All videos done! Nothing more to click."
         return state
 
-    frames = list_frame_paths(row["frames_dir"])
-    if not frames:
-        # frames dir is empty for some reason — mark skipped and try again
-        mark_video_skipped(row["video_id"])
-        return start_new_video(state)
+    plan = _ocr_frame_plan(row["video_id"], row["frames_dir"])
+    if plan is not None:
+        frame_paths, positions, suggestions = plan
+    else:
+        frame_paths = list_frame_paths(row["frames_dir"])
+        if not frame_paths:
+            # frames dir is empty for some reason — mark skipped and try again
+            mark_video_skipped(row["video_id"])
+            return start_new_video(state)
+        positions = sample_frame_positions(len(frame_paths), N_PROMPT_FRAMES)
+        suggestions = {}
 
-    positions = sample_frame_positions(len(frames), N_PROMPT_FRAMES)
     state = empty_state()
     state["video_id"] = row["video_id"]
     state["frames_dir"] = row["frames_dir"]
-    state["frame_paths"] = frames
+    state["frame_paths"] = frame_paths
     state["source_frame_indices"] = positions
+    state["frame_suggestions"] = suggestions
     state["status_msg"] = ""
     return state
 
@@ -609,6 +707,16 @@ def status_text(state: dict, remaining: int | None = None) -> str:
     n_objs = len(state["objects"])
     remaining_str = f"  |  {remaining} videos remaining" if remaining is not None else ""
     head = f"**{vid}**  |  frame {pos+1}/{total}  (source idx {src_idx} of {n_frames})  |  {n_objs} objects total"
+
+    # OCR-anchor mode: tell the user which instrument(s) first appear at this frame.
+    sugg = state.get("frame_suggestions", {}).get(pos)
+    if sugg:
+        parts = []
+        for s in sugg:
+            disp = s["label"].split("]")[-1].strip() if s.get("instrument_id") else None
+            pick = f" → pick **{disp}**" if disp else "  (no vocab match — pick manually)"
+            parts.append(f"arm{s['arm_idx']} **{s['ocr_name']}**{pick}")
+        head += "\n🔎 OCR: first appearance here — " + "; ".join(parts)
 
     active = state.get("active_obj_id")
     phase_drawing = "click 2nd corner" if state.get("pending_corner") else "click 1st corner"
@@ -728,7 +836,11 @@ def start_specific_video(state: dict, video_id: str) -> tuple[dict, str | None]:
         return fresh, None
 
     # Fresh / not-yet-clicked video
-    fresh["source_frame_indices"] = sample_frame_positions(len(frames), N_PROMPT_FRAMES)
+    plan = _ocr_frame_plan(video_id, row["frames_dir"])
+    if plan is not None:
+        fresh["frame_paths"], fresh["source_frame_indices"], fresh["frame_suggestions"] = plan
+    else:
+        fresh["source_frame_indices"] = sample_frame_positions(len(frames), N_PROMPT_FRAMES)
     return fresh, None
 
 
@@ -1124,6 +1236,7 @@ def main(argv: list[str] | None = None) -> int:
     load_dotenv(REPO_ROOT / ".env")
 
     global SEED, PROMPT_METHOD, PROMPTS_DIR, DRY_RUN, EDIT_MODE
+    global OCR_ANCHORS, OCR_ROOT, OCR_OFFSET
     p = argparse.ArgumentParser(description="Gradio click collector")
     p.add_argument("--port", type=int, default=9876)
     p.add_argument("--host", default="0.0.0.0",
@@ -1141,17 +1254,37 @@ def main(argv: list[str] | None = None) -> int:
                    help="Phase 0b relabel pass. Navigates to existing prompt_sets "
                         "with unknown_instrument rows so the dropdown can assign "
                         "labels in-place. Click a '?' row in the table to load it.")
+    p.add_argument("--ocr-anchors", action="store_true",
+                   help="Pick anchor frames from the OCR strip timeline — each "
+                        "instrument's first appearance — instead of the blind "
+                        "25/50/75%% sample. Pre-suggests the OCR-read instrument. "
+                        "Falls back to the sample when a video has no segments.csv.")
+    p.add_argument("--ocr-root", type=Path, default=OCR_ROOT,
+                   help=f"Root holding <video>/segments.csv (default {OCR_ROOT}).")
+    p.add_argument("--ocr-offset", type=int, default=OCR_OFFSET,
+                   help=f"Frames past each OCR change to anchor on, so the tool is "
+                        f"fully in view (default {OCR_OFFSET}).")
+    p.add_argument("--db", default=None,
+                   help="Override SURGSAM_MANIFEST (manifest path); defaults to .env. "
+                        "Canonical whip labels live at seed=1 in local_manifest.db.")
     args = p.parse_args(argv)
 
+    import os
+    if args.db:
+        os.environ["SURGSAM_MANIFEST"] = str(args.db)
     SEED = args.seed
     PROMPT_METHOD = args.method
     PROMPTS_DIR = args.prompts_dir
     DRY_RUN = args.dry_run
     EDIT_MODE = args.edit
+    OCR_ANCHORS = args.ocr_anchors
+    OCR_ROOT = args.ocr_root
+    OCR_OFFSET = args.ocr_offset
 
     print(f"Clicker write target: seed={SEED} method={PROMPT_METHOD} dir={PROMPTS_DIR}"
           + ("  [DRY RUN]" if DRY_RUN else "")
-          + ("  [EDIT MODE]" if EDIT_MODE else ""))
+          + ("  [EDIT MODE]" if EDIT_MODE else "")
+          + (f"  [OCR ANCHORS off={OCR_OFFSET} root={OCR_ROOT}]" if OCR_ANCHORS else ""))
 
     demo = build_ui()
     demo.queue().launch(
