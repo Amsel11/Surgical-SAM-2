@@ -72,6 +72,12 @@ run_one () {
 
     export SURGSAM_MANIFEST="$scr/manifest.db"
     python -m pipeline.cli scan-videos "$scr/frames" --cohort pja >/dev/null 2>&1 || return 1
+    # Seed the temp manifest's instruments table from the canonical one so
+    # AutoPrompter's prompt_objects.instrument_id FK ('unknown_instrument' etc.)
+    # is satisfied. Canonical manifest is read-only here (separate DB).
+    sqlite3 "$scr/manifest.db" "ATTACH DATABASE '$REPO/manifest.db' AS canonical; \
+        INSERT OR IGNORE INTO instruments SELECT * FROM canonical.instruments; \
+        DETACH DATABASE canonical;" || return 1
 
     export BP_RESULTS_ROOT="$REPO/results/final_pja"
     CUDA_VISIBLE_DEVICES="$gpu" python -m pipeline run \
