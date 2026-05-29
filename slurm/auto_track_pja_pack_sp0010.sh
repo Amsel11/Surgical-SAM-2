@@ -55,7 +55,7 @@ echo "=== PJA auto-track: ${#STEMS[@]} clips, FPS=$FPS, CONC=$CONC on $(hostname
 run_one () {
     local stem="$1" gpu="$2"
     local scr="$SCRBASE/pja_$stem"
-    rm -rf "$scr"; mkdir -p "$scr/frames" "$scr/seg/$stem"
+    rm -rf "$scr"; mkdir -p "$scr/frames/$stem" "$scr/seg/$stem"
     local clip="$CLIPS_DIR/$stem.mp4"
     [ -f "$clip" ] || { echo "MISSING clip $clip"; return 1; }
     [ -f "$OCRROOT/$stem/segments.csv" ] || { echo "MISSING OCR $stem"; return 1; }
