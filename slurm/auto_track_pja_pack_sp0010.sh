@@ -26,12 +26,11 @@
 set -uo pipefail
 REPO=/gpfs/data/oermannlab/users/schula12/Surgical-SAM-2
 cd "$REPO"; mkdir -p logs
-# SuperPOD slurm batch doesn't auto-define `module`; source the init script.
-# Then module load BEFORE venv activate (the order pja_ocr_fast_array.sh uses).
-source /etc/profile.d/modules.sh 2>/dev/null || true
-module load ffmpeg/7.1.1
+# ffmpeg lives on shared GPFS; bypass the module system (superpod compute
+# nodes don't pick up the modulefiles path reliably).
+export PATH=/gpfs/share/apps/ffmpeg/7.1.1/bin:$PATH
 source .sam3_venv/bin/activate
-command -v ffmpeg >/dev/null || { echo "FATAL: ffmpeg not found after module load"; exit 2; }
+command -v ffmpeg >/dev/null || { echo "FATAL: ffmpeg not at /gpfs/share/apps/ffmpeg/7.1.1/bin"; exit 2; }
 
 export BP_REPO="$REPO"
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
