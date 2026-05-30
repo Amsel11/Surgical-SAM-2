@@ -43,11 +43,12 @@ for root in "${ROOTS[@]}"; do
         if [ -f "$out" ] && [ "$out" -nt "$ov" ]; then
             n_skip=$(( n_skip + 1 )); continue
         fi
-        # bp's ffmpeg/7.1.1 is built without libx264; mpeg4 + -q:v works on
-        # any minimal build. ~2-5x bigger files but still tiny.
+        # bp's ffmpeg/7.1.1 is built without libx264. mpeg4 at bitrate ~600k
+        # gives ~30-50 MB for a typical 10-min preview (scaled 480 wide, fps 8,
+        # 4x sped up). Plenty for scroll-preview eyeballing.
         if ffmpeg -nostdin -loglevel error -y -i "$ov" \
-                -vf "scale=640:-2,setpts=PTS/4,fps=12" -an \
-                -c:v mpeg4 -q:v 4 \
+                -vf "scale=480:-2,setpts=PTS/4,fps=8" -an \
+                -c:v mpeg4 -b:v 600k -maxrate 800k -bufsize 1500k \
                 "$out" 2>>logs/quick_ov_${SLURM_JOB_ID}.err; then
             n_made=$(( n_made + 1 ))
             if [ $(( n_made % 10 )) -eq 0 ]; then
