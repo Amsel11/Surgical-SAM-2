@@ -43,9 +43,11 @@ for root in "${ROOTS[@]}"; do
         if [ -f "$out" ] && [ "$out" -nt "$ov" ]; then
             n_skip=$(( n_skip + 1 )); continue
         fi
+        # bp's ffmpeg/7.1.1 is built without libx264; mpeg4 + -q:v works on
+        # any minimal build. ~2-5x bigger files but still tiny.
         if ffmpeg -nostdin -loglevel error -y -i "$ov" \
                 -vf "scale=640:-2,setpts=PTS/4,fps=12" -an \
-                -c:v libx264 -preset veryfast -crf 28 \
+                -c:v mpeg4 -q:v 4 \
                 "$out" 2>>logs/quick_ov_${SLURM_JOB_ID}.err; then
             n_made=$(( n_made + 1 ))
             if [ $(( n_made % 10 )) -eq 0 ]; then
