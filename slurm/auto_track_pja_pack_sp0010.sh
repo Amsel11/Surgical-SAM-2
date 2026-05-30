@@ -69,6 +69,10 @@ run_one () {
 
     python -m tools.rescale_segments --in "$OCRROOT/$stem/segments.csv" \
         --out "$scr/seg/$stem/segments.csv" --fps "$FPS" || return 1
+    if [ "${DENSIFY_GAP:-0}" -gt 0 ]; then
+        python -m tools.densify_segments --in "$scr/seg/$stem/segments.csv" \
+            --out "$scr/seg/$stem/segments.csv" --gap "$DENSIFY_GAP" || return 1
+    fi
 
     export SURGSAM_MANIFEST="$scr/manifest.db"
     python -m pipeline.cli scan-videos "$scr/frames" --cohort pja >/dev/null 2>&1 || return 1
