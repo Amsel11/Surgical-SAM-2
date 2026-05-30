@@ -42,6 +42,9 @@ echo "=== PJA SAM3 auto-track: ${#STEMS[@]} clips, FPS=$FPS, CONC=$CONC @ $(date
 
 run_one () {
     local stem="$1" gpu="$2"
+    if [ -f "$REPO/results/final_pja/pja_auto_sam3_baseline_v1/$stem/seed_1/overlay.mp4" ]; then
+        echo "[$stem] SKIP - overlay.mp4 already exists"; return 0
+    fi
     local scr="$SCRBASE/pja_sam3_$stem"
     rm -rf "$scr"; mkdir -p "$scr/frames/$stem" "$scr/seg/$stem"
     local clip="$CLIPS_DIR/$stem.mp4"

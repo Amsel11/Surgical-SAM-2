@@ -55,6 +55,13 @@ echo "=== PJA auto-track: ${#STEMS[@]} clips, FPS=$FPS, CONC=$CONC on $(hostname
 
 run_one () {
     local stem="$1" gpu="$2"
+    # Idempotent skip: a follow-up run on the same RUN_NAME only does clips
+    # that don't already have an overlay.mp4 (i.e. the new clips that got
+    # OCR after the previous run).
+    if [ -f "$REPO/results/final_pja/$RUN_NAME/$stem/seed_1/overlay.mp4" ]; then
+        echo "[$stem] SKIP - overlay.mp4 already exists for $RUN_NAME"
+        return 0
+    fi
     local scr="$SCRBASE/pja_$stem"
     rm -rf "$scr"; mkdir -p "$scr/frames/$stem" "$scr/seg/$stem"
     local clip="$CLIPS_DIR/$stem.mp4"
