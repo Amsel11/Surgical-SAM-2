@@ -39,16 +39,21 @@ for root in "${ROOTS[@]}"; do
     echo "=== $root ==="
     for ov in "$root"/*/seed_1/overlay.mp4; do
         [ -f "$ov" ] || continue
-        out="$(dirname "$ov")/quick.mp4"
+        # quick_v2.mp4 = the playable rebuild. Previous quick.mp4 files were
+        # encoded without -pix_fmt yuv420p and render all-green in QuickTime/
+        # Safari/Photos. The bad ones can be ignored / deleted manually.
+        out="$(dirname "$ov")/quick_v2.mp4"
         if [ -f "$out" ] && [ "$out" -nt "$ov" ]; then
             n_skip=$(( n_skip + 1 )); continue
         fi
-        # bp's ffmpeg/7.1.1 is built without libx264. mpeg4 at bitrate ~600k
-        # gives ~30-50 MB for a typical 10-min preview (scaled 480 wide, fps 8,
-        # 4x sped up). Plenty for scroll-preview eyeballing.
+        # bp's ffmpeg/7.1.1 has no libx264; mpeg4 is the only software encoder.
+        # -pix_fmt yuv420p forces the standard chroma format so QuickTime /
+        # Safari / Photos can decode (without it, mpeg4 may emit a chroma
+        # format those players render as all-green). -q:v 5 is more reliable
+        # than -b:v for mpeg4 quality control.
         if ffmpeg -nostdin -loglevel error -y -i "$ov" \
-                -vf "scale=480:-2,setpts=PTS/4,fps=8" -an \
-                -c:v mpeg4 -b:v 600k -maxrate 800k -bufsize 1500k \
+                -vf "scale=480:-2,setpts=PTS/4,fps=8,format=yuv420p" -an \
+                -c:v mpeg4 -pix_fmt yuv420p -q:v 5 \
                 "$out" 2>>logs/quick_ov_${SLURM_JOB_ID}.err; then
             n_made=$(( n_made + 1 ))
             if [ $(( n_made % 10 )) -eq 0 ]; then
