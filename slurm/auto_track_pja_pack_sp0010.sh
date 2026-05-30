@@ -40,6 +40,7 @@ CLIPS_DIR=/gpfs/data/oermannlab/users/schula12/whipple-transfer/clips
 OCRROOT="$REPO/results/ocr_paddle_clips"
 FPS="${FPS:-6}"
 CONC="${CONC:-16}"
+RUN_NAME="${RUN_NAME:-pja_auto_surgsam2_v1}"
 NGPU=8
 SCRBASE="${SLURM_TMPDIR:-/tmp}"
 
@@ -86,7 +87,7 @@ run_one () {
     export BP_RESULTS_ROOT="$REPO/results/final_pja"
     CUDA_VISIBLE_DEVICES="$gpu" python -m pipeline run \
         +experiment=whip_auto_surgsam2 \
-        name=pja_auto_surgsam2_v1 \
+        name="$RUN_NAME" \
         "scope.videos=[$stem]" \
         scope.seed=1 \
         "stage1_prompting.segments_root=$scr/seg"

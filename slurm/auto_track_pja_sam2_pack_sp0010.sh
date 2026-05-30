@@ -62,10 +62,13 @@ run_one () {
         DETACH DATABASE canonical;" || return 1
 
     export BP_RESULTS_ROOT="$REPO/results/final_pja"
+    # Start from whip_auto_surgsam2 (it has auto + segments_root in the struct)
+    # and just swap stage2_inference to vanilla SAM 2.1 hiera-small.
     CUDA_VISIBLE_DEVICES="$gpu" python -m pipeline run \
-        +experiment=sam2_oob_whip \
+        +experiment=whip_auto_surgsam2 \
         name=pja_auto_sam2_v1 \
-        stage1_prompting.method=auto \
+        stage2_inference.model=sam2 \
+        "stage2_inference.checkpoint=$REPO/checkpoints/sam2.1_hiera_small.pt" \
         "scope.videos=[$stem]" \
         scope.seed=1 \
         "stage1_prompting.segments_root=$scr/seg"
