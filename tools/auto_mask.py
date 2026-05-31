@@ -204,78 +204,41 @@ def main():
         n = extract_frames(args.video, seg["start"], dur, args.fps, frames_dir)
         print(f"\n=== seg {k}: {seg['start']:.0f}-{seg['end']:.0f}s, {n} frames ===")
 
-        # Detect at several anchor frames spread across the segment, then build
-        # within-segment tracks (greedy IoU across anchors) so each instrument is
-        # seeded at EVERY frame it appears — not just one anchor. This keeps the
-        # whole segment covered instead of relying on a long one-sided propagation
-        # (the cause of "only one instrument masked at the start of a segment").
-        anchors = sorted({min(n - 1, max(0, int(fr * n))) for fr in (0.2, 0.4, 0.6, 0.8)})
-        dets = {}
-        for a in anchors:
+        # Detect at several candidate anchors and seed ALL objects at the SINGLE
+        # best frame (most detections, tie-broken by score). One shared
+        # conditioning frame keeps obj_id identity stable through propagation.
+        # (Seeding objects at different frames, or linking detections across
+        # anchors, merged distinct instruments and made identity/colors flicker.)
+        best = None
+        for fr in (0.25, 0.45, 0.65, 0.85):
+            a = min(n - 1, max(0, int(fr * n)))
             kb, _, _ = detect_instruments(detector, frames_dir / f"{a:05d}.jpg",
                                           min_score=args.min_score)
-            dets[a] = kb
-            print(f"  anchor@{a}: {len(kb)} det")
-
-        # Link detections into within-segment tracks, but ONLY across *adjacent*
-        # anchors (a track may extend from anchor i-1 to i). Never bridge a gap of
-        # empty anchors — over tens of seconds the same screen region can hold a
-        # different instrument, and bridging it would seed one obj_id with boxes
-        # pointing at two instruments (which confuses SAM2 and merges them).
-        tracks = []  # {"boxes": {frame: box}, "last_ai", "best_score", "best_frame", "query"}
-        for ai, a in enumerate(anchors):
-            for b in dets[a]:
-                cand = None
-                for t in tracks:
-                    if t["last_ai"] != ai - 1:  # adjacent anchors only
-                        continue
-                    i = iou_xyxy(b["box"], t["boxes"][t["best_frame_recent"]])
-                    if i > 0.4 and (cand is None or i > cand[1]):
-                        cand = (t, i)
-                if cand:
-                    t = cand[0]
-                    t["boxes"][a] = b["box"]
-                    t["last_ai"] = ai
-                    t["best_frame_recent"] = a
-                    if b["score"] > t["best_score"]:
-                        t["best_score"], t["best_frame"], t["query"] = b["score"], a, b["query"]
-                else:
-                    tracks.append({"boxes": {a: b["box"]}, "last_ai": ai,
-                                   "best_frame_recent": a, "best_score": b["score"],
-                                   "best_frame": a, "query": b["query"]})
-
-        # rank by coverage (frames seen) then score; cap to the OCR instrument count
-        tracks.sort(key=lambda t: (len(t["boxes"]), t["best_score"]), reverse=True)
-        if seg["n"]:
-            tracks = tracks[:seg["n"]]
-        if not tracks:
+            ssum = sum(b["score"] for b in kb)
+            print(f"  anchor@{a}: {len(kb)} det, score-sum {ssum:.2f}")
+            if best is None or len(kb) > len(best[1]) or (
+                    len(kb) == len(best[1]) and ssum > best[2]):
+                best = (a, kb, ssum)
+        anchor, kept = best[0], best[1]
+        if seg["n"] and len(kept) > seg["n"]:
+            kept = kept[:seg["n"]]
+        if not kept:
             print("  no detections passed the gate — skipping segment")
             continue
 
-        # cross-segment identity via each track's best-frame box (box ~ trocar/arm)
-        reps = [{"box": t["boxes"][t["best_frame"]], "query": t["query"],
-                 "score": t["best_score"], "track": t} for t in tracks]
-        ided, next_id = match_identity(reps, last_boxes, next_id)
+        ided, next_id = match_identity(kept, last_boxes, next_id)
+        objs, seed_areas = [], {}
+        for oid, b in ided.items():
+            x0, y0, x1, y1 = b["box"]
+            seed_areas[oid] = (x1 - x0) * (y1 - y0)
+            objs.append({"obj_id": oid, "positive": [], "box": b["box"],
+                         "negative": corner_negatives(b["box"]) if args.neg_corners else []})
+        last_boxes = {oid: b["box"] for oid, b in ided.items()}
+        print(f"  seeding {len(objs)} objects @anchor {anchor}: " +
+              ", ".join(f"obj{oid}={ided[oid]['query']}({ided[oid]['score']:.2f})" for oid in ided))
 
-        # Seed each object exactly ONCE, at its highest-confidence frame. Different
-        # objects seed at their own appearance frames, so coverage is still spread
-        # across the segment — without conflicting multi-frame prompts per object.
-        objs_by_frame, seed_areas = defaultdict(list), {}
-        for oid, rep in ided.items():
-            bf = rep["track"]["best_frame"]
-            box = rep["track"]["boxes"][bf]
-            seed_areas[oid] = (box[2] - box[0]) * (box[3] - box[1])
-            objs_by_frame[str(bf)].append({
-                "obj_id": oid, "positive": [], "box": box,
-                "negative": corner_negatives(box) if args.neg_corners else []})
-        last_boxes = {oid: rep["box"] for oid, rep in ided.items()}
-        print("  seeding: " + ", ".join(
-            f"obj{oid}={rep['query']}({rep['score']:.2f})@{rep['track']['best_frame']}"
-            for oid, rep in ided.items()))
-
-        pj = {"video": f"seg_{k}", "n_frames": n,
-              "prompt_frames": sorted(int(f) for f in objs_by_frame),
-              "objects_by_frame": dict(objs_by_frame)}
+        pj = {"video": f"seg_{k}", "n_frames": n, "prompt_frames": [anchor],
+              "objects_by_frame": {str(anchor): objs}}
         pj_path = seg_dir / "prompts.json"
         pj_path.write_text(json.dumps(pj, indent=2))
 
@@ -289,7 +252,7 @@ def main():
             results_dir=seg_dir, src_fps=args.fps,
         )
 
-        ui_line = active_region(Image.open(frames_dir / f"{anchors[0]:05d}.jpg"))[3]
+        ui_line = active_region(Image.open(frames_dir / f"{anchor:05d}.jpg"))[3]
         drift = drift_report(seg_dir / "masks", seed_areas, args.drift_factor)
         flagged = [oid for oid, d in drift.items() if d["drifted"]]
         if flagged:
@@ -297,10 +260,9 @@ def main():
         clean = rerender_clean(seg_dir, frames_dir, seed_areas, args.drift_factor, args.fps, ui_line)
         summary["segments"].append({
             "idx": k, "start": seg["start"], "end": seg["end"], "n_frames": n,
-            "instruments_ocr": seg["instruments"],
-            "objects": {oid: {"query": rep["query"], "score": rep["score"], "box": rep["box"],
-                              "seed_frames": sorted(rep["track"]["boxes"])}
-                        for oid, rep in ided.items()},
+            "anchor": anchor, "instruments_ocr": seg["instruments"],
+            "objects": {oid: {"query": b["query"], "score": b["score"], "box": b["box"]}
+                        for oid, b in ided.items()},
             "drift": drift,
         })
         ov = clean if clean else (seg_dir / "overlay.mp4")
