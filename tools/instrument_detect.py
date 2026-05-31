@@ -27,6 +27,7 @@ import argparse
 import json
 from pathlib import Path
 
+import numpy as np
 from PIL import Image, ImageDraw
 
 from pipeline.prompts._grounding_dino_detector import (
@@ -49,16 +50,32 @@ def build_detector(model="IDEA-Research/grounding-dino-base", device="mps",
         device=device, model_id=model, box_threshold=box_th, text_threshold=text_th))
 
 
-def passes_priors(box, W, H, edge_frac, area_cap, ui_bottom):
+def content_bbox(img, thresh=14):
+    """Bounding box of the non-black surgical content — strips pillar/letterbox
+    bars so the edge prior keys off the *image* edge, not the raw frame edge.
+    Some clips (e.g. 1920x1080 cases) center a square image between black bars;
+    instruments enter at the content edge, which the frame edge misses."""
+    arr = np.asarray(img.convert("RGB"))
+    bright = arr.max(axis=2) > thresh
+    cols = np.where(bright.any(axis=0))[0]
+    rows = np.where(bright.any(axis=1))[0]
+    if len(cols) == 0 or len(rows) == 0:
+        return (0, 0, img.size[0], img.size[1])
+    return (int(cols[0]), int(rows[0]), int(cols[-1]) + 1, int(rows[-1]) + 1)
+
+
+def passes_priors(box, content, edge_frac, area_cap, ui_bottom):
     x0, y0, x1, y1 = box[:4]
-    area = ((x1 - x0) * (y1 - y0)) / (W * H)
+    cx0, cy0, cx1, cy1 = content
+    cw, ch = max(1, cx1 - cx0), max(1, cy1 - cy0)
+    area = ((x1 - x0) * (y1 - y0)) / (cw * ch)
     if area > area_cap:
         return False, f"area {area:.2f}>cap"
-    if y0 > ui_bottom * H:
+    if y0 > cy0 + ui_bottom * ch:
         return False, "in UI bar"
     near_edge = (
-        x0 <= edge_frac * W or y0 <= edge_frac * H
-        or x1 >= (1 - edge_frac) * W or y1 >= (1 - edge_frac) * H
+        x0 <= cx0 + edge_frac * cw or y0 <= cy0 + edge_frac * ch
+        or x1 >= cx1 - edge_frac * cw or y1 >= cy1 - edge_frac * ch
     )
     if not near_edge:
         return False, "not edge-anchored"
@@ -75,6 +92,7 @@ def detect_instruments(detector, frame_path, *, queries=None, min_score=0.16,
     queries = queries or DEFAULT_QUERIES
     img = Image.open(frame_path).convert("RGB")
     W, H = img.size
+    content = content_bbox(img)
     res = detector.detect(frame_path, queries)
 
     cand = sorted(
@@ -89,7 +107,7 @@ def detect_instruments(detector, frame_path, *, queries=None, min_score=0.16,
             dropped.append({"query": q, "score": round(sc, 3), "box": [x0, y0, x1, y1],
                             "reason": f"score<{min_score}"})
             continue
-        ok, why = passes_priors((x0, y0, x1, y1), W, H, edge_frac, area_cap, ui_bottom)
+        ok, why = passes_priors((x0, y0, x1, y1), content, edge_frac, area_cap, ui_bottom)
         if not ok:
             dropped.append({"query": q, "score": round(sc, 3), "box": [x0, y0, x1, y1], "reason": why})
             continue
