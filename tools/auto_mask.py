@@ -114,46 +114,69 @@ def match_identity(boxes, last_boxes, next_id, iou_thresh=0.2):
     return out, next_id
 
 
-def drift_report(masks_dir, seed_areas, drift_factor, sample=12):
-    """Sample palette masks; flag objects whose area balloons past the seed."""
+def drift_report(masks_dir, seed_areas, drift_factor):
+    """Flag objects whose mask SPIKES well above its own typical (median) size —
+    the leak signature. Median, not seed-box area, is the reference: a small
+    partial seed box must not make a steadily-larger (correct) mask look drifted."""
     masks = sorted(Path(masks_dir).glob("*.png"))
     if not masks:
         return {}
-    step = max(1, len(masks) // sample)
-    peak = defaultdict(float)
-    for m in masks[::step]:
+    areas = {oid: [] for oid in seed_areas}
+    for m in masks:
         arr = np.array(Image.open(m))
         for oid in seed_areas:
-            peak[oid] = max(peak[oid], int((arr == oid).sum()))
-    return {oid: {"peak_area": peak[oid], "seed_area": seed_areas[oid],
-                  "ratio": round(peak[oid] / max(1, seed_areas[oid]), 2),
-                  "drifted": peak[oid] > drift_factor * seed_areas[oid]}
-            for oid in seed_areas}
+            areas[oid].append(int((arr == oid).sum()))
+    out = {}
+    for oid in seed_areas:
+        present = sorted(a for a in areas[oid] if a > 0)
+        med = present[len(present) // 2] if present else seed_areas[oid]
+        peak = max(areas[oid]) if areas[oid] else 0
+        out[oid] = {"peak_area": peak, "median_area": med, "seed_area": seed_areas[oid],
+                    "ratio": round(peak / max(1, med), 2), "drifted": peak > drift_factor * med}
+    return out
 
 
 def rerender_clean(seg_dir, frames_dir, seed_areas, drift_factor, fps, ui_line=None):
-    """Re-render the overlay drawing each object only on frames where its area is
-    sane (<= drift_factor x seed). Suppresses an object exactly on the frames it
-    leaks onto tissue. Rows at/below ui_line (the da Vinci UI bar) are zeroed so
-    no mask ever renders in the instrument-label strip."""
+    """Re-render the overlay, suppressing an object only on frames where its mask
+    SPIKES above its own typical (median) size — the leak signature. Using the
+    median (not the seed-box area) as reference avoids nuking an object whose seed
+    box was a small partial detection but whose true mask is steadily larger
+    (that bug made the long grasper vanish). Rows at/below ui_line (UI bar) are
+    zeroed so no mask renders in the instrument-label strip."""
     masks = sorted((Path(seg_dir) / "masks").glob("*.png"))
     if not masks:
         return None
+
+    def load(m):
+        pal = np.array(Image.open(m))
+        if ui_line is not None:
+            pal[int(ui_line):, :] = 0
+        return pal
+
+    # pass 1: per-object area on every frame -> typical (median over present frames)
+    areas = {oid: [] for oid in seed_areas}
+    for m in masks:
+        pal = load(m)
+        for oid in seed_areas:
+            areas[oid].append(int((pal == oid).sum()))
+    ref = {}
+    for oid in seed_areas:
+        present = sorted(a for a in areas[oid] if a > 0)
+        ref[oid] = present[len(present) // 2] if present else seed_areas[oid]
+
+    # pass 2: draw, dropping only spike frames (area > drift_factor * typical)
     clean_dir = Path(seg_dir) / "overlay_clean_jpgs"
     clean_dir.mkdir(exist_ok=True)
-    for m in masks:
+    for mi, m in enumerate(masks):
         frame = cv2.imread(str(Path(frames_dir) / f"{m.stem}.jpg"))
         if frame is None:
             continue
-        palette = np.array(Image.open(m))
-        if ui_line is not None:
-            palette[int(ui_line):, :] = 0  # exclude the UI bar from the masks
-        for oid, seed in seed_areas.items():
-            objmask = palette == oid
-            area = int(objmask.sum())
-            if area == 0 or area > drift_factor * seed:
-                continue  # absent or leaking -> don't draw this object this frame
-            frame = overlay_mask(frame, objmask, davis_color_bgr(oid))
+        pal = load(m)
+        for oid in seed_areas:
+            a = areas[oid][mi]
+            if a == 0 or a > drift_factor * ref[oid]:
+                continue
+            frame = overlay_mask(frame, pal == oid, davis_color_bgr(oid))
         cv2.imwrite(str(clean_dir / f"{m.stem}.jpg"), frame)
     out_mp4 = Path(seg_dir) / "overlay_clean.mp4"
     encode_mp4_from_jpgs(clean_dir, out_mp4, fps)
