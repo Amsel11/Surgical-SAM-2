@@ -32,6 +32,7 @@ os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 import argparse
 import csv
 import json
+import shutil
 import subprocess
 from collections import defaultdict
 from pathlib import Path
@@ -193,7 +194,9 @@ def run_tracker(args, seg_dir, frames_dir, n, objs_by_frame, seg_k):
     cfg = Stage2Inference(
         model="sam2", checkpoint=args.checkpoint, config=args.config,
         device=args.device, bidirectional=True,
-        outputs=Stage2Outputs(masks=True, overlay_video=True, overlay_jpgs=False, preview_small=False),
+        # masks only — the reviewable overlay is rebuilt from masks by rerender_clean,
+        # so the tracker's own overlay encoding is pure waste in the batch path.
+        outputs=Stage2Outputs(masks=True, overlay_video=False, overlay_jpgs=False, preview_small=False),
     )
     SAM2VideoTracker(cfg).run(video_id=f"seg_{seg_k}", frames_dir=Path(frames_dir),
                               prompts_json=pj_path, results_dir=Path(seg_dir), src_fps=args.fps)
@@ -257,6 +260,8 @@ def main():
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--fps", type=float, default=6.0)
     ap.add_argument("--anchor-frac", type=float, default=0.5, help="where in the segment to detect")
+    ap.add_argument("--max-chunk-sec", type=float, default=150.0,
+                    help="split long OCR segments into chunks of this many seconds (bounds SAM2 memory)")
     ap.add_argument("--min-score", type=float, default=0.16)
     ap.add_argument("--drift-factor", type=float, default=4.0)
     ap.add_argument("--recover", action="store_true", default=True,
@@ -276,9 +281,16 @@ def main():
     segs = load_segments(args.segments_csv, args.video_id, args.start_sec, args.end_sec)
     if not segs:
         raise SystemExit(f"No segments for {args.video_id} in [{args.start_sec},{args.end_sec}]")
-    print(f"{len(segs)} OCR segment(s) in window:")
-    for s in segs:
-        print(f"  {s['start']:.0f}-{s['end']:.0f}s  n={s['n']}  {s['instruments']}")
+    # Split each OCR segment into chunks so SAM2's init_state never loads more
+    # than ~max_chunk_sec of frames at once (a 40-min segment would OOM).
+    units = []
+    for k, seg in enumerate(segs):
+        t, ci = seg["start"], 0
+        while t < seg["end"] - 0.5:
+            ce = min(seg["end"], t + args.max_chunk_sec)
+            units.append({**seg, "start": t, "end": ce, "seg": k, "chunk": ci})
+            t, ci = ce, ci + 1
+    print(f"{len(segs)} OCR segment(s) -> {len(units)} chunk(s) (<= {args.max_chunk_sec:.0f}s each)")
 
     detector = build_detector(device=args.device)
     last_boxes, next_id = {}, 1
@@ -286,15 +298,21 @@ def main():
                "fps": args.fps, "segments": []}
     overlay_paths = []
 
-    for k, seg in enumerate(segs):
-        seg_dir = out / f"seg_{k:02d}"
+    for u in units:
+        seg = u
+        k, ci = u["seg"], u["chunk"]
+        uid = f"{k}_{ci}"
+        seg_dir = out / f"seg_{k:02d}_c{ci:02d}"
         frames_dir = seg_dir / "frames"
         dur = seg["end"] - seg["start"]
         if dur < 1.0:
-            print(f"  seg {k}: too short ({dur:.1f}s), skipping")
+            continue
+        if (seg_dir / "overlay_clean.mp4").exists():  # resumable: skip done chunks
+            print(f"  seg {k} chunk {ci}: already done, skipping")
+            overlay_paths.append(seg_dir / "overlay_clean.mp4")
             continue
         n = extract_frames(args.video, seg["start"], dur, args.fps, frames_dir)
-        print(f"\n=== seg {k}: {seg['start']:.0f}-{seg['end']:.0f}s, {n} frames ===")
+        print(f"\n=== seg {k} chunk {ci}: {seg['start']:.0f}-{seg['end']:.0f}s, {n} frames ===")
 
         # Detect at several candidate anchors and seed ALL objects at the SINGLE
         # best frame (most detections, tie-broken by score). One shared
@@ -331,7 +349,7 @@ def main():
 
         # Pass 1: stable seeding (all objects at one shared anchor).
         objs_by_frame = {str(anchor): objs}
-        run_tracker(args, seg_dir, frames_dir, n, objs_by_frame, k)
+        run_tracker(args, seg_dir, frames_dir, n, objs_by_frame, uid)
 
         # Pass 2: recover sustained dropouts by re-seeding the lost object under
         # its OWN id at a frame where it's unambiguously re-detected.
@@ -345,7 +363,7 @@ def main():
                     objs_by_frame.setdefault(str(pf), []).append({
                         "obj_id": oid, "positive": [], "box": box,
                         "negative": corner_negatives(box) if args.neg_corners else []})
-                run_tracker(args, seg_dir, frames_dir, n, objs_by_frame, k)
+                run_tracker(args, seg_dir, frames_dir, n, objs_by_frame, uid)
 
         ui_line = active_region(Image.open(frames_dir / f"{anchor:05d}.jpg"))[3]
         drift = drift_report(seg_dir / "masks", seed_areas, args.drift_factor)
@@ -354,12 +372,13 @@ def main():
             print(f"  ⚠ drift-flagged objects (mask ballooned): {flagged}")
         clean = rerender_clean(seg_dir, frames_dir, seed_areas, args.drift_factor, args.fps, ui_line)
         summary["segments"].append({
-            "idx": k, "start": seg["start"], "end": seg["end"], "n_frames": n,
+            "idx": k, "chunk": ci, "start": seg["start"], "end": seg["end"], "n_frames": n,
             "anchor": anchor, "instruments_ocr": seg["instruments"],
             "objects": {oid: {"query": b["query"], "score": b["score"], "box": b["box"]}
                         for oid, b in ided.items()},
             "drift": drift,
         })
+        shutil.rmtree(frames_dir, ignore_errors=True)  # masks+overlay kept; free disk
         ov = clean if clean else (seg_dir / "overlay.mp4")
         if ov and Path(ov).exists():
             overlay_paths.append(Path(ov))

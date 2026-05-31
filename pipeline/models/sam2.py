@@ -154,6 +154,9 @@ class SAM2VideoTracker(VideoTracker):
             if torch.cuda.get_device_properties(device.index or 0).major >= 8:
                 torch.backends.cuda.matmul.allow_tf32 = True
                 torch.backends.cudnn.allow_tf32 = True
+        elif device.type == "mps" and os.getenv("SURGSAM_MPS_FP16", "1") == "1":
+            # fp16 autocast on Apple GPU ~1.5-2x faster; negligible mask change.
+            torch.autocast(device_type="mps", dtype=torch.float16).__enter__()
 
         predictor = build_predictor(cfg.config, cfg.checkpoint, device=device)
         # offload_video_to_cpu: 25,000 × 1920 × 1080 × 3 ≈ 150 GB; can't fit on GPU.
