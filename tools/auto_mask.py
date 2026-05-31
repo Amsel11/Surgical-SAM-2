@@ -183,6 +183,70 @@ def rerender_clean(seg_dir, frames_dir, seed_areas, drift_factor, fps, ui_line=N
     return out_mp4 if out_mp4.exists() else None
 
 
+def run_tracker(args, seg_dir, frames_dir, n, objs_by_frame, seg_k):
+    """Run SAM2 over a segment given prompts (obj boxes at one or more frames)."""
+    pj = {"video": f"seg_{seg_k}", "n_frames": n,
+          "prompt_frames": sorted(int(f) for f in objs_by_frame),
+          "objects_by_frame": objs_by_frame}
+    pj_path = Path(seg_dir) / "prompts.json"
+    pj_path.write_text(json.dumps(pj, indent=2))
+    cfg = Stage2Inference(
+        model="sam2", checkpoint=args.checkpoint, config=args.config,
+        device=args.device, bidirectional=True,
+        outputs=Stage2Outputs(masks=True, overlay_video=True, overlay_jpgs=False, preview_small=False),
+    )
+    SAM2VideoTracker(cfg).run(video_id=f"seg_{seg_k}", frames_dir=Path(frames_dir),
+                              prompts_json=pj_path, results_dir=Path(seg_dir), src_fps=args.fps)
+
+
+def recover_prompts(seg_dir, frames_dir, detector, obj_ids, min_score, min_gap, ui_frac=0.08):
+    """After a stable first pass, recover sustained dropouts. For each run of >=
+    min_gap frames where an object's mask is absent, probe a few frames inside it
+    and re-seed that object IFF the assignment is unambiguous:
+      - it is the ONLY seeded object absent at the probe frame, and
+      - a fresh detection sits in UNCLAIMED space (not covering another present
+        object's mask).
+    Returns [(frame, oid, box)]. The strict gating is what makes re-prompting
+    safe: we never attach a box that belongs to a different instrument."""
+    masks = sorted((Path(seg_dir) / "masks").glob("*.png"))
+    if not masks:
+        return []
+    pals = [np.array(Image.open(m)) for m in masks]
+    n = len(pals)
+    areas = {oid: [int((p == oid).sum()) for p in pals] for oid in obj_ids}
+    recoveries = []
+    for oid in obj_ids:
+        i = 0
+        while i < n:
+            if areas[oid][i] != 0:
+                i += 1
+                continue
+            j = i
+            while j < n and areas[oid][j] == 0:
+                j += 1
+            if j - i >= min_gap:
+                for pf in (i + (j - i) // 2, i + (j - i) // 4, min(j - 1, i + 3 * (j - i) // 4)):
+                    if [o for o in obj_ids if areas[o][pf] == 0] != [oid]:
+                        continue  # ambiguous — more than just this object is missing
+                    kept, _, _ = detect_instruments(detector, frames_dir / f"{pf:05d}.jpg",
+                                                    min_score=min_score, ui_frac=ui_frac)
+                    pal, best = pals[pf], None
+                    for kb in kept:
+                        x0, y0, x1, y1 = [int(v) for v in kb["box"]]
+                        reg = pal[max(0, y0):y1, max(0, x0):x1]
+                        if reg.size == 0:
+                            continue
+                        claimed = any((reg == o).sum() > 0.25 * reg.size
+                                      for o in obj_ids if o != oid and areas[o][pf] > 0)
+                        if not claimed and (best is None or kb["score"] > best["score"]):
+                            best = kb
+                    if best:
+                        recoveries.append((pf, oid, best["box"]))
+                        break  # one recovery seed per dropout stretch
+            i = j
+    return recoveries
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--video", required=True)
@@ -195,6 +259,11 @@ def main():
     ap.add_argument("--anchor-frac", type=float, default=0.5, help="where in the segment to detect")
     ap.add_argument("--min-score", type=float, default=0.16)
     ap.add_argument("--drift-factor", type=float, default=4.0)
+    ap.add_argument("--recover", action="store_true", default=True,
+                    help="second pass: re-seed sustained dropouts under their own obj_id")
+    ap.add_argument("--no-recover", dest="recover", action="store_false")
+    ap.add_argument("--recover-min-gap", type=int, default=12,
+                    help="min consecutive blank frames before recovery kicks in")
     ap.add_argument("--neg-corners", action="store_true", default=True)
     ap.add_argument("--no-neg-corners", dest="neg_corners", action="store_false")
     ap.add_argument("--device", default="mps")
@@ -260,20 +329,23 @@ def main():
         print(f"  seeding {len(objs)} objects @anchor {anchor}: " +
               ", ".join(f"obj{oid}={ided[oid]['query']}({ided[oid]['score']:.2f})" for oid in ided))
 
-        pj = {"video": f"seg_{k}", "n_frames": n, "prompt_frames": [anchor],
-              "objects_by_frame": {str(anchor): objs}}
-        pj_path = seg_dir / "prompts.json"
-        pj_path.write_text(json.dumps(pj, indent=2))
+        # Pass 1: stable seeding (all objects at one shared anchor).
+        objs_by_frame = {str(anchor): objs}
+        run_tracker(args, seg_dir, frames_dir, n, objs_by_frame, k)
 
-        cfg = Stage2Inference(
-            model="sam2", checkpoint=args.checkpoint, config=args.config,
-            device=args.device, bidirectional=True,
-            outputs=Stage2Outputs(masks=True, overlay_video=True, overlay_jpgs=False, preview_small=False),
-        )
-        SAM2VideoTracker(cfg).run(
-            video_id=f"seg_{k}", frames_dir=frames_dir, prompts_json=pj_path,
-            results_dir=seg_dir, src_fps=args.fps,
-        )
+        # Pass 2: recover sustained dropouts by re-seeding the lost object under
+        # its OWN id at a frame where it's unambiguously re-detected.
+        if args.recover:
+            rec = recover_prompts(seg_dir, frames_dir, detector, list(ided),
+                                  args.min_score, args.recover_min_gap)
+            if rec:
+                print("  recovering dropouts: " +
+                      ", ".join(f"obj{o}@{f}" for f, o, _ in rec))
+                for pf, oid, box in rec:
+                    objs_by_frame.setdefault(str(pf), []).append({
+                        "obj_id": oid, "positive": [], "box": box,
+                        "negative": corner_negatives(box) if args.neg_corners else []})
+                run_tracker(args, seg_dir, frames_dir, n, objs_by_frame, k)
 
         ui_line = active_region(Image.open(frames_dir / f"{anchor:05d}.jpg"))[3]
         drift = drift_report(seg_dir / "masks", seed_areas, args.drift_factor)
