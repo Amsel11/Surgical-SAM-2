@@ -96,7 +96,9 @@ def _load_img_as_tensor(img_path, image_size):
         img_np = img_np / 255.0
     else:
         raise RuntimeError(f"Unknown image dtype: {img_np.dtype} on {img_path}")
-    img = torch.from_numpy(img_np).permute(2, 0, 1)
+    # uint8 / 255.0 promotes to float64 under numpy; cast back to float32 so
+    # the async-loader path stays MPS-safe (MPS rejects float64 tensors).
+    img = torch.from_numpy(img_np).permute(2, 0, 1).float()
     video_width, video_height = img_pil.size  # the original video size
     return img, video_height, video_width
 

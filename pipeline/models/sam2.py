@@ -39,6 +39,32 @@ from pipeline.models.base import VideoTracker
 # the full SAM2 stack (helps unit tests that just want the class shape).
 
 
+def resolve_device(requested: str) -> "torch.device":
+    """Map a requested device string to one actually available here.
+
+    bp/SuperPOD configs ask for ``cuda:N``; on an Apple-silicon laptop that
+    has no CUDA we fall through to ``mps`` (the M-series GPU) and only then
+    to ``cpu``. Lets the same configs run locally for mask QC without
+    editing every YAML. Set ``PYTORCH_ENABLE_MPS_FALLBACK=1`` so the handful
+    of ops SAM2 uses that MPS lacks fall back to CPU instead of erroring.
+    """
+    req = str(requested).strip().lower()
+    if req.startswith("cuda"):
+        if torch.cuda.is_available():
+            return torch.device(req)
+        if torch.backends.mps.is_available():
+            print(f"[device] {req!r} requested but CUDA unavailable — using mps")
+            return torch.device("mps")
+        print(f"[device] {req!r} requested but CUDA unavailable — using cpu")
+        return torch.device("cpu")
+    if req.startswith("mps"):
+        if torch.backends.mps.is_available():
+            return torch.device("mps")
+        print("[device] mps requested but unavailable — using cpu")
+        return torch.device("cpu")
+    return torch.device(req)
+
+
 class SAM2VideoTracker(VideoTracker):
     """SAM 2 family video segmentation tracker.
 
@@ -121,7 +147,7 @@ class SAM2VideoTracker(VideoTracker):
         print(f"Loaded {len(frame_names)} frames (source_offset={source_offset})")
 
         # ── Build predictor + inference state ────────────────────────────
-        device = torch.device(cfg.device if torch.cuda.is_available() else "cpu")
+        device = resolve_device(cfg.device)
         print(f"Using device {device}")
         if device.type == "cuda":
             torch.autocast(device_type="cuda", dtype=torch.bfloat16).__enter__()

@@ -16,6 +16,11 @@ It accepts either:
 """
 from __future__ import annotations
 
+import os
+# On Apple-silicon (mps) a few SAM2 ops aren't implemented; fall back to CPU
+# for those instead of crashing. Must be set before torch is imported.
+os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+
 import argparse
 import json as _json
 import shutil
