@@ -45,7 +45,7 @@ from pipeline.io import davis_color_bgr, encode_mp4_from_jpgs, overlay_mask
 from pipeline.models.sam2 import SAM2VideoTracker
 from pipeline.prompts._grounding_dino_detector import iou_xyxy
 
-from tools.instrument_detect import build_detector, detect_instruments
+from tools.instrument_detect import active_region, build_detector, detect_instruments
 
 ARM_COLS = ["arm1", "arm2", "arm3", "arm4"]
 
@@ -131,10 +131,11 @@ def drift_report(masks_dir, seed_areas, drift_factor, sample=12):
             for oid in seed_areas}
 
 
-def rerender_clean(seg_dir, frames_dir, seed_areas, drift_factor, fps):
+def rerender_clean(seg_dir, frames_dir, seed_areas, drift_factor, fps, ui_line=None):
     """Re-render the overlay drawing each object only on frames where its area is
     sane (<= drift_factor x seed). Suppresses an object exactly on the frames it
-    leaks onto tissue, keeping the frames where it tracks correctly."""
+    leaks onto tissue. Rows at/below ui_line (the da Vinci UI bar) are zeroed so
+    no mask ever renders in the instrument-label strip."""
     masks = sorted((Path(seg_dir) / "masks").glob("*.png"))
     if not masks:
         return None
@@ -145,6 +146,8 @@ def rerender_clean(seg_dir, frames_dir, seed_areas, drift_factor, fps):
         if frame is None:
             continue
         palette = np.array(Image.open(m))
+        if ui_line is not None:
+            palette[int(ui_line):, :] = 0  # exclude the UI bar from the masks
         for oid, seed in seed_areas.items():
             objmask = palette == oid
             area = int(objmask.sum())
@@ -201,41 +204,63 @@ def main():
         n = extract_frames(args.video, seg["start"], dur, args.fps, frames_dir)
         print(f"\n=== seg {k}: {seg['start']:.0f}-{seg['end']:.0f}s, {n} frames ===")
 
-        # Detect at several candidate anchors; seed at the frame that exposes the
-        # most instruments (a single mid-segment frame often has tools occluded).
-        best = None
-        for fr in (0.25, 0.45, 0.65, 0.85):
-            a = min(n - 1, max(0, int(fr * n)))
-            k_boxes, _, _ = detect_instruments(detector, frames_dir / f"{a:05d}.jpg",
-                                               min_score=args.min_score)
-            ssum = sum(b["score"] for b in k_boxes)
-            print(f"  anchor@{a} ({fr:.0%}): {len(k_boxes)} det, score-sum {ssum:.2f}")
-            if best is None or len(k_boxes) > len(best[1]) or (
-                    len(k_boxes) == len(best[1]) and ssum > best[2]):
-                best = (a, k_boxes, ssum)
-        anchor, kept = best[0], best[1]
-        anchor_path = frames_dir / f"{anchor:05d}.jpg"
-        print(f"  -> seeding from anchor@{anchor} with {len(kept)} detections")
-        # OCR tells us how many instruments are active: keep the top-N by score.
-        if seg["n"] and len(kept) > seg["n"]:
-            kept = kept[:seg["n"]]
-        if not kept:
+        # Detect at several anchor frames spread across the segment, then build
+        # within-segment tracks (greedy IoU across anchors) so each instrument is
+        # seeded at EVERY frame it appears — not just one anchor. This keeps the
+        # whole segment covered instead of relying on a long one-sided propagation
+        # (the cause of "only one instrument masked at the start of a segment").
+        anchors = sorted({min(n - 1, max(0, int(fr * n))) for fr in (0.2, 0.4, 0.6, 0.8)})
+        dets = {}
+        for a in anchors:
+            kb, _, _ = detect_instruments(detector, frames_dir / f"{a:05d}.jpg",
+                                          min_score=args.min_score)
+            dets[a] = kb
+            print(f"  anchor@{a}: {len(kb)} det")
+
+        tracks = []  # {"boxes": {frame: box}, "score", "query"}
+        for a in anchors:
+            for b in dets[a]:
+                cand = None
+                for t in tracks:
+                    i = iou_xyxy(b["box"], t["boxes"][max(t["boxes"])])
+                    if i > 0.3 and (cand is None or i > cand[1]):
+                        cand = (t, i)
+                if cand:
+                    cand[0]["boxes"][a] = b["box"]
+                    cand[0]["score"] = max(cand[0]["score"], b["score"])
+                else:
+                    tracks.append({"boxes": {a: b["box"]}, "score": b["score"], "query": b["query"]})
+
+        # rank by coverage (frames seen) then score; cap to the OCR instrument count
+        tracks.sort(key=lambda t: (len(t["boxes"]), t["score"]), reverse=True)
+        if seg["n"]:
+            tracks = tracks[:seg["n"]]
+        if not tracks:
             print("  no detections passed the gate — skipping segment")
             continue
 
-        ided, next_id = match_identity(kept, last_boxes, next_id)
-        objs, seed_areas = [], {}
-        for oid, b in ided.items():
-            x0, y0, x1, y1 = b["box"]
-            seed_areas[oid] = (x1 - x0) * (y1 - y0)
-            objs.append({"obj_id": oid, "positive": [], "box": b["box"],
-                         "negative": corner_negatives(b["box"]) if args.neg_corners else []})
-        last_boxes = {oid: b["box"] for oid, b in ided.items()}
-        print(f"  seeding {len(objs)} objects: " +
-              ", ".join(f"obj{oid}={ided[oid]['query']}({ided[oid]['score']:.2f})" for oid in ided))
+        # cross-segment identity via each track's central box (box ~ trocar/arm)
+        reps = [{"box": t["boxes"][sorted(t["boxes"])[len(t["boxes"]) // 2]],
+                 "query": t["query"], "score": t["score"], "track": t} for t in tracks]
+        ided, next_id = match_identity(reps, last_boxes, next_id)
 
-        pj = {"video": f"seg_{k}", "n_frames": n, "prompt_frames": [anchor],
-              "objects_by_frame": {str(anchor): objs}}
+        objs_by_frame, seed_areas = defaultdict(list), {}
+        for oid, rep in ided.items():
+            boxes = rep["track"]["boxes"]
+            areas = sorted((b[2] - b[0]) * (b[3] - b[1]) for b in boxes.values())
+            seed_areas[oid] = areas[len(areas) // 2]
+            for fr, box in boxes.items():
+                objs_by_frame[str(fr)].append({
+                    "obj_id": oid, "positive": [], "box": box,
+                    "negative": corner_negatives(box) if args.neg_corners else []})
+        last_boxes = {oid: rep["box"] for oid, rep in ided.items()}
+        print("  seeding: " + ", ".join(
+            f"obj{oid}={rep['query']}({rep['score']:.2f})@{sorted(rep['track']['boxes'])}"
+            for oid, rep in ided.items()))
+
+        pj = {"video": f"seg_{k}", "n_frames": n,
+              "prompt_frames": sorted(int(f) for f in objs_by_frame),
+              "objects_by_frame": dict(objs_by_frame)}
         pj_path = seg_dir / "prompts.json"
         pj_path.write_text(json.dumps(pj, indent=2))
 
@@ -249,17 +274,18 @@ def main():
             results_dir=seg_dir, src_fps=args.fps,
         )
 
+        ui_line = active_region(Image.open(frames_dir / f"{anchors[0]:05d}.jpg"))[3]
         drift = drift_report(seg_dir / "masks", seed_areas, args.drift_factor)
         flagged = [oid for oid, d in drift.items() if d["drifted"]]
         if flagged:
             print(f"  ⚠ drift-flagged objects (mask ballooned): {flagged}")
-        # Re-render a clean overlay that suppresses each object on its leaking frames
-        clean = rerender_clean(seg_dir, frames_dir, seed_areas, args.drift_factor, args.fps)
+        clean = rerender_clean(seg_dir, frames_dir, seed_areas, args.drift_factor, args.fps, ui_line)
         summary["segments"].append({
             "idx": k, "start": seg["start"], "end": seg["end"], "n_frames": n,
-            "anchor": anchor, "instruments_ocr": seg["instruments"],
-            "objects": {oid: {"query": b["query"], "score": b["score"], "box": b["box"]}
-                        for oid, b in ided.items()},
+            "instruments_ocr": seg["instruments"],
+            "objects": {oid: {"query": rep["query"], "score": rep["score"], "box": rep["box"],
+                              "seed_frames": sorted(rep["track"]["boxes"])}
+                        for oid, rep in ided.items()},
             "drift": drift,
         })
         ov = clean if clean else (seg_dir / "overlay.mp4")

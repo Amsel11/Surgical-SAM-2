@@ -64,18 +64,28 @@ def content_bbox(img, thresh=14):
     return (int(cols[0]), int(rows[0]), int(cols[-1]) + 1, int(rows[-1]) + 1)
 
 
-def passes_priors(box, content, edge_frac, area_cap, ui_bottom):
+def active_region(img, ui_frac=0.08, thresh=14):
+    """Content bbox MINUS the bottom da Vinci UI bar (instrument labels/icons).
+    Edge/area priors, seed boxes, and rendered masks all key off this region so
+    the UI strip is excluded from the analysis entirely. ui_frac is the fraction
+    of content height occupied by the bottom bar."""
+    cx0, cy0, cx1, cy1 = content_bbox(img, thresh)
+    ch = max(1, cy1 - cy0)
+    return (cx0, cy0, cx1, int(cy1 - ui_frac * ch))
+
+
+def passes_priors(box, region, edge_frac, area_cap):
     x0, y0, x1, y1 = box[:4]
-    cx0, cy0, cx1, cy1 = content
-    cw, ch = max(1, cx1 - cx0), max(1, cy1 - cy0)
-    area = ((x1 - x0) * (y1 - y0)) / (cw * ch)
+    rx0, ry0, rx1, ry1 = region
+    rw, rh = max(1, rx1 - rx0), max(1, ry1 - ry0)
+    if y0 >= ry1:
+        return False, "in UI bar"
+    area = ((x1 - x0) * (y1 - y0)) / (rw * rh)
     if area > area_cap:
         return False, f"area {area:.2f}>cap"
-    if y0 > cy0 + ui_bottom * ch:
-        return False, "in UI bar"
     near_edge = (
-        x0 <= cx0 + edge_frac * cw or y0 <= cy0 + edge_frac * ch
-        or x1 >= cx1 - edge_frac * cw or y1 >= cy1 - edge_frac * ch
+        x0 <= rx0 + edge_frac * rw or y0 <= ry0 + edge_frac * rh
+        or x1 >= rx1 - edge_frac * rw or y1 >= ry1 - edge_frac * rh
     )
     if not near_edge:
         return False, "not edge-anchored"
@@ -83,16 +93,17 @@ def passes_priors(box, content, edge_frac, area_cap, ui_bottom):
 
 
 def detect_instruments(detector, frame_path, *, queries=None, min_score=0.16,
-                       edge_frac=0.06, area_cap=0.18, ui_bottom=0.93, nms_iou=0.55):
+                       edge_frac=0.06, area_cap=0.18, ui_frac=0.08, nms_iou=0.55):
     """Return (kept, dropped, (W, H)).
 
     kept: [{"query", "score", "box":[x0,y0,x1,y1]}] sorted by score desc, after
-    confidence gate + geometric priors + greedy NMS.
+    confidence gate + geometric priors + greedy NMS. Boxes are clamped to the
+    active region (content minus pillarbox + UI bar).
     """
     queries = queries or DEFAULT_QUERIES
     img = Image.open(frame_path).convert("RGB")
     W, H = img.size
-    content = content_bbox(img)
+    region = active_region(img, ui_frac)
     res = detector.detect(frame_path, queries)
 
     cand = sorted(
@@ -107,15 +118,17 @@ def detect_instruments(detector, frame_path, *, queries=None, min_score=0.16,
             dropped.append({"query": q, "score": round(sc, 3), "box": [x0, y0, x1, y1],
                             "reason": f"score<{min_score}"})
             continue
-        ok, why = passes_priors((x0, y0, x1, y1), content, edge_frac, area_cap, ui_bottom)
+        ok, why = passes_priors((x0, y0, x1, y1), region, edge_frac, area_cap)
         if not ok:
             dropped.append({"query": q, "score": round(sc, 3), "box": [x0, y0, x1, y1], "reason": why})
             continue
         if any(iou_xyxy([x0, y0, x1, y1], k["box"]) > nms_iou for k in kept):
             dropped.append({"query": q, "score": round(sc, 3), "box": [x0, y0, x1, y1], "reason": "nms"})
             continue
-        kept.append({"query": q, "score": round(sc, 3),
-                     "box": [round(x0), round(y0), round(x1), round(y1)]})
+        # clamp to the active region so the seed box never includes pillarbox/UI bar
+        rx0, ry0, rx1, ry1 = region
+        cb = [max(x0, rx0), max(y0, ry0), min(x1, rx1), min(y1, ry1)]
+        kept.append({"query": q, "score": round(sc, 3), "box": [round(v) for v in cb]})
     return kept, dropped, (W, H)
 
 
@@ -141,7 +154,7 @@ def main():
     ap.add_argument("--min-score", type=float, default=0.16, help="drop boxes below this (precision gate)")
     ap.add_argument("--edge-frac", type=float, default=0.06)
     ap.add_argument("--area-cap", type=float, default=0.18)
-    ap.add_argument("--ui-bottom", type=float, default=0.93)
+    ap.add_argument("--ui-frac", type=float, default=0.08, help="bottom fraction = UI bar, excluded")
     ap.add_argument("--nms-iou", type=float, default=0.55)
     args = ap.parse_args()
 
@@ -150,7 +163,7 @@ def main():
     kept, dropped, (W, H) = detect_instruments(
         det, args.frame, queries=args.queries, min_score=args.min_score,
         edge_frac=args.edge_frac, area_cap=args.area_cap,
-        ui_bottom=args.ui_bottom, nms_iou=args.nms_iou)
+        ui_frac=args.ui_frac, nms_iou=args.nms_iou)
 
     img = Image.open(args.frame).convert("RGB")
     draw = ImageDraw.Draw(img)
@@ -164,7 +177,7 @@ def main():
         "frame": str(args.frame), "model": args.model, "device": args.device,
         "queries": args.queries, "box_th": args.box_th, "text_th": args.text_th,
         "min_score": args.min_score, "edge_frac": args.edge_frac, "area_cap": args.area_cap,
-        "ui_bottom": args.ui_bottom, "nms_iou": args.nms_iou, "n_kept": len(kept),
+        "ui_frac": args.ui_frac, "nms_iou": args.nms_iou, "n_kept": len(kept),
     }, indent=2))
 
     print(f"-> {len(kept)} kept (dropped {len(dropped)})")
