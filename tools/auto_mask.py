@@ -217,45 +217,60 @@ def main():
             dets[a] = kb
             print(f"  anchor@{a}: {len(kb)} det")
 
-        tracks = []  # {"boxes": {frame: box}, "score", "query"}
-        for a in anchors:
+        # Link detections into within-segment tracks, but ONLY across *adjacent*
+        # anchors (a track may extend from anchor i-1 to i). Never bridge a gap of
+        # empty anchors — over tens of seconds the same screen region can hold a
+        # different instrument, and bridging it would seed one obj_id with boxes
+        # pointing at two instruments (which confuses SAM2 and merges them).
+        tracks = []  # {"boxes": {frame: box}, "last_ai", "best_score", "best_frame", "query"}
+        for ai, a in enumerate(anchors):
             for b in dets[a]:
                 cand = None
                 for t in tracks:
-                    i = iou_xyxy(b["box"], t["boxes"][max(t["boxes"])])
-                    if i > 0.3 and (cand is None or i > cand[1]):
+                    if t["last_ai"] != ai - 1:  # adjacent anchors only
+                        continue
+                    i = iou_xyxy(b["box"], t["boxes"][t["best_frame_recent"]])
+                    if i > 0.4 and (cand is None or i > cand[1]):
                         cand = (t, i)
                 if cand:
-                    cand[0]["boxes"][a] = b["box"]
-                    cand[0]["score"] = max(cand[0]["score"], b["score"])
+                    t = cand[0]
+                    t["boxes"][a] = b["box"]
+                    t["last_ai"] = ai
+                    t["best_frame_recent"] = a
+                    if b["score"] > t["best_score"]:
+                        t["best_score"], t["best_frame"], t["query"] = b["score"], a, b["query"]
                 else:
-                    tracks.append({"boxes": {a: b["box"]}, "score": b["score"], "query": b["query"]})
+                    tracks.append({"boxes": {a: b["box"]}, "last_ai": ai,
+                                   "best_frame_recent": a, "best_score": b["score"],
+                                   "best_frame": a, "query": b["query"]})
 
         # rank by coverage (frames seen) then score; cap to the OCR instrument count
-        tracks.sort(key=lambda t: (len(t["boxes"]), t["score"]), reverse=True)
+        tracks.sort(key=lambda t: (len(t["boxes"]), t["best_score"]), reverse=True)
         if seg["n"]:
             tracks = tracks[:seg["n"]]
         if not tracks:
             print("  no detections passed the gate — skipping segment")
             continue
 
-        # cross-segment identity via each track's central box (box ~ trocar/arm)
-        reps = [{"box": t["boxes"][sorted(t["boxes"])[len(t["boxes"]) // 2]],
-                 "query": t["query"], "score": t["score"], "track": t} for t in tracks]
+        # cross-segment identity via each track's best-frame box (box ~ trocar/arm)
+        reps = [{"box": t["boxes"][t["best_frame"]], "query": t["query"],
+                 "score": t["best_score"], "track": t} for t in tracks]
         ided, next_id = match_identity(reps, last_boxes, next_id)
 
+        # Seed each object exactly ONCE, at its highest-confidence frame. Different
+        # objects seed at their own appearance frames, so coverage is still spread
+        # across the segment — without conflicting multi-frame prompts per object.
         objs_by_frame, seed_areas = defaultdict(list), {}
         for oid, rep in ided.items():
-            boxes = rep["track"]["boxes"]
-            areas = sorted((b[2] - b[0]) * (b[3] - b[1]) for b in boxes.values())
-            seed_areas[oid] = areas[len(areas) // 2]
-            for fr, box in boxes.items():
-                objs_by_frame[str(fr)].append({
-                    "obj_id": oid, "positive": [], "box": box,
-                    "negative": corner_negatives(box) if args.neg_corners else []})
+            bf = rep["track"]["best_frame"]
+            box = rep["track"]["boxes"][bf]
+            seed_areas[oid] = (box[2] - box[0]) * (box[3] - box[1])
+            objs_by_frame[str(bf)].append({
+                "obj_id": oid, "positive": [], "box": box,
+                "negative": corner_negatives(box) if args.neg_corners else []})
         last_boxes = {oid: rep["box"] for oid, rep in ided.items()}
         print("  seeding: " + ", ".join(
-            f"obj{oid}={rep['query']}({rep['score']:.2f})@{sorted(rep['track']['boxes'])}"
+            f"obj{oid}={rep['query']}({rep['score']:.2f})@{rep['track']['best_frame']}"
             for oid, rep in ided.items()))
 
         pj = {"video": f"seg_{k}", "n_frames": n,
